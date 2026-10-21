@@ -1,9 +1,6 @@
 .venv/
 __pycache__/
 *.pyc
-data/observations.sqlite
-data/observations.sqlite-wal
-data/observations.sqlite-shm
 web/data/latest.json
 web/data/series.json
 web/data/validation.json
