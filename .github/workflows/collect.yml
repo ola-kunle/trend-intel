@@ -41,12 +41,17 @@ jobs:
           pip install -r requirements.txt
           pip install yt-dlp
 
-      - name: Cache observation store
+      # The cache is restored to a side path so it can be compared with the
+      # copy in the repository rather than blindly overwriting it.
+      - name: Cache observation store (restore)
         uses: actions/cache/restore@v4
         with:
-          path: data/observations.sqlite
+          path: cache/observations.sqlite
           key: obs-${{ github.run_number }}
           restore-keys: obs-
+
+      - name: Reconcile observation store
+        run: python -m tools.reconcile data/observations.sqlite cache/observations.sqlite
 
       - name: Collect
         run: python -m collector.run --no-llm ${{ inputs.quick && '--quick' || '' }}
@@ -56,9 +61,15 @@ jobs:
 
       - name: Cache observation store (save)
         if: always()
+        run: |
+          sqlite3 data/observations.sqlite "PRAGMA wal_checkpoint(TRUNCATE);" || true
+          mkdir -p cache
+          cp -f data/observations.sqlite cache/observations.sqlite
+      - name: Cache observation store (upload)
+        if: always()
         uses: actions/cache/save@v4
         with:
-          path: data/observations.sqlite
+          path: cache/observations.sqlite
           key: obs-${{ github.run_number }}
 
       # The observation store is also committed to the repository once a week.
@@ -81,7 +92,7 @@ jobs:
           git config user.email "bot@users.noreply.github.com"
           git add -f data/observations.sqlite "$today"
           git commit -q -m "history: weekly observation checkpoint $(date -u +%Y-%m-%d)" || echo "nothing to commit"
-          git push origin HEAD:main
+          git push origin HEAD:main || echo "checkpoint push skipped (conflict); cache still holds the store"
 
       # The dashboard reads live data from the raw file host on the `data`
       # branch, so the site updates every cycle without a Netlify rebuild.
