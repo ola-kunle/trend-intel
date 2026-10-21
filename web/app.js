@@ -482,6 +482,32 @@
       "<dt>Lead &gt; 0</dt><dd>" + esc(lt.positive_leads) + "</dd>" +
       "<dt>Lead &lt; 0</dt><dd>" + esc(lt.negative_leads) + "</dd></dl>" +
       '<p style="margin-top:8px">' + esc(lt.message || lt.interpretation || "") + "</p>" +
+      "<h4>Lead time against manual browsing</h4>" +
+      (function () {
+        var r = d.production_detector_lead_time || {};
+        if (!r.n) {
+          return "<p>Not measurable yet: no topic has both a production-detector " +
+            "emerging classification and an appearance on the manual baseline. " +
+            (r.message ? esc(r.message) : "") + "</p>";
+        }
+        var elig = r.eligible_n || 0;
+        return '<p style="color:var(--ink)">The production detector is replayed ' +
+          "cycle by cycle over the archived history, and compared against " +
+          "Reddit's own rising and top rankings &mdash; the closest keyless " +
+          "equivalent of the Creative Center list a person checks by hand.</p>" +
+          '<dl class="kv">' +
+          "<dt>All comparable topics</dt><dd>" + r.n + " (" + r.ahead_of_manual +
+          " ahead, " + r.behind_manual + " behind, median " +
+          (r.median_lead_cycles == null ? "\u2014" : r.median_lead_cycles) +
+          " cycles)</dd>" +
+          "<dt>Eligible subset</dt><dd>" + elig + " (" + (r.eligible_ahead || 0) +
+          " ahead, " + (r.eligible_behind || 0) + " behind, median " +
+          (r.eligible_median_lead_cycles == null ? "\u2014" : r.eligible_median_lead_cycles) +
+          " cycles)</dd>" +
+          "</dl>" +
+          '<p style="margin-top:8px">' + esc(r.eligible_note || "") + "</p>" +
+          '<p style="margin-top:8px">' + esc(r.interpretation || "") + "</p>";
+      })() +
       "<h4>Cross-platform confirmation lag</h4>" +
       '<dl class="kv"><dt>Concepts measured</dt><dd>' + esc(cp.n) + "</dd>" +
       "<dt>Median lag</dt><dd>" + esc(numf(cp.median_lag_cycles)) + " cycles</dd></dl>" +

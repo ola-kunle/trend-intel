@@ -361,12 +361,34 @@ def manual_baseline_report(hist, conn=None):
     leads = [r["lead_cycles"] for r in rows]
     ahead = sum(1 for l in leads if l < 0)
     behind = sum(1 for l in leads if l > 0)
+
+    # Cold-start confound. A topic that was already on the manual surface in
+    # the first few cycles could not have been beaten: the detector needs a
+    # baseline before it is allowed to call anything emerging, so for those
+    # topics "lead time" is undefined rather than negative. The eligible
+    # subset is the one where the system had a baseline before the manual
+    # surface showed the topic.
+    eligible = [r for r in rows
+                if r["manual_surface_cycle"] >= config.MIN_OBSERVATIONS]
+    elig_leads = [r["lead_cycles"] for r in eligible]
     return {
         "status": "measured",
         "n": len(rows),
         "ahead_of_manual": ahead,
         "behind_manual": behind,
         "median_lead_cycles": statistics.median(leads),
+        "eligible_n": len(eligible),
+        "eligible_ahead": sum(1 for l in elig_leads if l < 0),
+        "eligible_behind": sum(1 for l in elig_leads if l > 0),
+        "eligible_median_lead_cycles": (statistics.median(elig_leads)
+                                        if elig_leads else None),
+        "eligible_note": (
+            "Topics whose first appearance on the manual surface came at or "
+            "after cycle %d - the point at which the detector had a baseline. "
+            "Topics that were already trending when collection began cannot be "
+            "beaten by definition, so they are excluded here and reported "
+            "separately above." % config.MIN_OBSERVATIONS
+        ),
         "unit": "collection cycles",
         "interpretation": (
             "Negative lead means the system had flagged the topic before it "
@@ -480,12 +502,34 @@ def real_lead_time(conn, replay):
     leads = [r["lead_cycles"] for r in rows]
     ahead = sum(1 for l in leads if l < 0)
     behind = sum(1 for l in leads if l > 0)
+
+    # Cold-start confound. A topic that was already on the manual surface in
+    # the first few cycles could not have been beaten: the detector needs a
+    # baseline before it is allowed to call anything emerging, so for those
+    # topics "lead time" is undefined rather than negative. The eligible
+    # subset is the one where the system had a baseline before the manual
+    # surface showed the topic.
+    eligible = [r for r in rows
+                if r["manual_surface_cycle"] >= config.MIN_OBSERVATIONS]
+    elig_leads = [r["lead_cycles"] for r in eligible]
     return {
         "status": "measured",
         "n": len(rows),
         "ahead_of_manual": ahead,
         "behind_manual": behind,
         "median_lead_cycles": statistics.median(leads),
+        "eligible_n": len(eligible),
+        "eligible_ahead": sum(1 for l in elig_leads if l < 0),
+        "eligible_behind": sum(1 for l in elig_leads if l > 0),
+        "eligible_median_lead_cycles": (statistics.median(elig_leads)
+                                        if elig_leads else None),
+        "eligible_note": (
+            "Topics whose first appearance on the manual surface came at or "
+            "after cycle %d - the point at which the detector had a baseline. "
+            "Topics that were already trending when collection began cannot be "
+            "beaten by definition, so they are excluded here and reported "
+            "separately above." % config.MIN_OBSERVATIONS
+        ),
         "unit": "collection cycles",
         "interpretation": (
             "Negative lead means the dashboard would have shown the topic as "
