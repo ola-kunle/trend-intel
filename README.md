@@ -158,23 +158,51 @@ dashboard shows the relationship rather than merging them.
 | Wikipedia pageviews | live | Wikimedia API, polite pool | rotating articles |
 | Google News RSS (24 h window) | live | public RSS | rotating queries |
 | Europe PMC | live | open API | every cycle |
+| **PubMed counts (year over year)** | live | NCBI E-utilities, 3 req/s | rotating topics |
+| **arXiv preprints** | live | public API | rotating topics |
+| **Mastodon hashtag search** | live | public API | rotating topics |
+| **Lemmy search** | live | public instance API | rotating topics |
 | iTunes / Apple Podcasts | live | public iTunes API | every cycle |
 | Hacker News (Algolia) | live | public API | every cycle |
 | Mastodon trends | live | public API | every cycle |
-| Reddit subreddit RSS | live, **degrading** | public RSS; **ends 13 Nov 2026** | rotating, heavily rate limited |
+| Reddit subreddit RSS | live, **degrading** | public RSS; **ends 13 Nov 2026** | rotating, rate limited |
 | TikTok Creative Center | **blocked** | no public API | attempted, reported honestly |
 | Instagram hashtag search | **awaiting authorisation** | App Review + Public Content Access | inert until a token exists |
 | Threads keyword search | **awaiting authorisation** | App Review for `threads_keyword_search` | inert until a token exists |
 | Pinterest Trends | **awaiting authorisation** | Standard access review | inert until a token exists |
+| **Brave Search API** | **awaiting authorisation** | free monthly credit | inert until a key exists |
+| **YouTube Data API** | **awaiting authorisation** | free 10,000 unit/day quota | inert until a key exists |
+| Google Books | **blocked** | shared project quota exhausted without a key | not used |
 
-The last three adapters are **implemented and wired**, not aspirational. Supply a token
-and they start contributing on the next cycle:
+### Why PubMed counts matter
+
+It is the one signal in the system with a baseline the collector does not have
+to build. The research literature's own year-over-year movement is an external
+measure of whether a topic is genuinely emerging — a topic whose paper count
+goes 4 → 19 → 31 across three years is growing research attention whether or
+not anyone was watching it. Stored as a growth ratio, so a sustained rise is a
+trend in its own right.
+
+### Why Brave is worth a key
+
+Google's own autocomplete endpoint ignores the country parameter — you can
+only localise by language. Brave's API takes `country=` directly, which is the
+fix for genuine Finland- and Spain-level targeting. Its free tier includes a
+recurring monthly credit.
+
+Those adapters are **implemented and wired**, not aspirational. Supply a
+credential and they start contributing on the next cycle:
 
 ```bash
 export INSTAGRAM_ACCESS_TOKEN=...   # + IG_USER_ID
 export THREADS_ACCESS_TOKEN=...
 export PINTEREST_ACCESS_TOKEN=...
+export BRAVE_API_KEY=...            # free monthly credit, country-targeted
+export YOUTUBE_API_KEY=...          # free 10,000 units/day
 ```
+
+Until then they report themselves as "awaiting authorisation" in Source
+Health, so their absence is visible rather than silent.
 
 **What this system will not do:** defeat a CAPTCHA, forge a request signature, solve a
 challenge, or use a residential proxy to defeat a WAF. Those are access-control
