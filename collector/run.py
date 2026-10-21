@@ -246,14 +246,18 @@ def collect(conn, only=None, quick=False, cycle_id=0):
 
     # Key-gated official APIs. Inert until a token is supplied; they report
     # themselves as awaiting authorisation rather than silently disappearing.
+    # The queue for the authorised platforms is seeded by what the other
+    # sources have just discovered, so Instagram and Threads are asked about
+    # the topics the free surfaces found rather than about a fixed list.
+    ig_tags = ig_tag_queue(conn, limit=24)
+
     run("brave_search", sources.brave_search, None, [], "US")
     run("youtube_data_api", sources.youtube_data_api, None, [], "US")
     run("threads_search", sources.threads_keyword_search, None, ig_tags[:12])
     run("pinterest_trends", sources.pinterest_trends, None, ("US", "ES", "SE+DK+FI+NO"))
 
-    # Instagram: the queue is seeded by what the other sources discovered, and
-    # Meta's 30-unique-tags-per-7-days budget is tracked locally.
-    ig_tags = ig_tag_queue(conn, limit=24) if (only is None or "instagram_hashtag" in only) else []
+    # Instagram: Meta allows 30 unique hashtags per rolling 7 days, and
+    # re-querying a known tag is free, so the budget is tracked locally.
     run("instagram_hashtag", sources.instagram_hashtag_search, None, ig_tags, conn)
 
     # --- Human captures from TikTok / Instagram -----------------------------
