@@ -103,12 +103,12 @@ body {
   background: rgba(11,14,20,.94); backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--line);
 }
-.tabs { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+.tabs { display: flex; gap: 0; overflow-x: auto; scrollbar-width: none; justify-content: space-between; }
 .tabs::-webkit-scrollbar { display: none; }
 .tab {
-  color: var(--ink-faint); text-decoration: none; font-size: 13px; font-weight: 550;
-  padding: 13px 14px; white-space: nowrap; border-bottom: 2px solid transparent;
-  transition: .15s;
+  color: var(--ink-faint); text-decoration: none; font-size: 12.5px; font-weight: 550;
+  padding: 13px 11px; white-space: nowrap; border-bottom: 2px solid transparent;
+  transition: .15s; letter-spacing: -.005em;
 }
 .tab:hover { color: var(--ink); }
 .tab.active { color: var(--accent); border-bottom-color: var(--accent); }

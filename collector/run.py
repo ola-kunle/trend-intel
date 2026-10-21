@@ -75,7 +75,7 @@ def _shortlist(seeds, cursor, take):
 # Collection
 # ---------------------------------------------------------------------------
 
-def collect(conn, only=None, quick=False):
+def collect(conn, only=None, quick=False, cycle_id=0):
     rows = []
     health = {}
 
@@ -127,7 +127,9 @@ def collect(conn, only=None, quick=False):
     # --- Autocomplete ------------------------------------------------------
     # One language per cycle (rotating), so Finnish and Spanish coverage
     # builds over time without tripling the request budget.
-    cycle = int(store.get_state(conn, "cycle", "0") or 0)
+    # The rotation is driven by the cycle id so it can never drift out of
+    # step with the observation store's own numbering.
+    cycle = cycle_id
     lang = config.SUGGEST_LANG_CYCLE[cycle % len(config.SUGGEST_LANG_CYCLE)]
     sug_count = 4 if quick else config.SUGGEST_SEEDS_PER_CYCLE
     sug_seeds, cursor = _shortlist(seeds, cursor, sug_count)
@@ -553,7 +555,7 @@ def main():
     store.prune(conn)
 
     cycle_id = int(store.get_state(conn, "cycle_id", "0") or 0) + 1
-    rows, health = collect(conn, only=only, quick=args.quick)
+    rows, health = collect(conn, only=only, quick=args.quick, cycle_id=cycle_id)
     for r in rows:
         r["cycle"] = cycle_id
     store.set_state(conn, "cycle_id", cycle_id)

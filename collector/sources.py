@@ -233,6 +233,7 @@ def _suggest(url, lang):
 
 def google_suggest(seeds, lang, modifiers=None):
     modifiers = modifiers or config.SUGGEST_MODIFIERS
+    geo = config.LANG_GEO.get(lang, "GLOBAL")
     out = []
     for seed in seeds:
         for mod in modifiers:
@@ -250,7 +251,7 @@ def google_suggest(seeds, lang, modifiers=None):
                 if not key:
                     continue
                 out.append(_row(
-                    source="google_suggest", geo="GLOBAL", lang=lang,
+                    source="google_suggest", geo=geo, lang=lang,
                     surface="suggest", concept=key, raw_text=s,
                     metric="count", value=1.0,
                     url="https://www.google.com/search?q=" + urllib.parse.quote(s),
@@ -261,6 +262,7 @@ def google_suggest(seeds, lang, modifiers=None):
 
 
 def youtube_suggest(seeds, lang):
+    geo = config.LANG_GEO.get(lang, "GLOBAL")
     """YouTube's autocomplete carries relative popularity weights.
 
     The trailing integer array in the response is a rank bucket; diffing it
@@ -289,7 +291,7 @@ def youtube_suggest(seeds, lang):
             if not key:
                 continue
             out.append(_row(
-                source="youtube_suggest", geo="GLOBAL", lang=lang,
+                source="youtube_suggest", geo=geo, lang=lang,
                 surface="suggest", concept=key, raw_text=phrase,
                 metric="suggest_weight", value=weight,
                 url="https://www.youtube.com/results?search_query=" + urllib.parse.quote(phrase),

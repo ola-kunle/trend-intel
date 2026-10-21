@@ -12,6 +12,8 @@
   // fallback so the site is never blank.
   var REMOTE = "https://raw.githubusercontent.com/ola-kunle/trend-intel/data/data/latest.json";
   var LOCAL = "./data/latest.json";
+  var REMOTE_VALIDATION = "https://raw.githubusercontent.com/ola-kunle/trend-intel/data/data/validation.json";
+  var LOCAL_VALIDATION = "./data/validation.json";
 
   var S = {
     data: null,
@@ -357,6 +359,69 @@
     }).join("");
   }
 
+  function renderValidation(v) {
+    var el = $("#validation-body");
+    if (!el) return;
+    if (!v) {
+      el.innerHTML = '<p>The validation report has not been generated yet. It is produced on every collection cycle by <code>tools/validate.py</code>.</p>';
+      return;
+    }
+    function pctf(x) { return (x == null ? "—" : (Number(x) * 100).toFixed(1) + "%"); }
+    function numf(x) { return (x == null ? "—" : x); }
+    var lt = v.lead_time_vs_manual_baseline || {};
+    var cp = v.cross_platform_confirmation || {};
+    var fp = v.false_positives || {};
+    var pt = v.permutation_test || {};
+    var verdictClass = v.history_span_days >= (v.minimum_history_for_conclusions_days || 21) ? "good" : "warn";
+    el.innerHTML =
+      '<h4>Verdict</h4>' +
+      '<p><strong style="color:var(' + (verdictClass === "good" ? "--green" : "--amber") + ')">' + esc(v.verdict || "") + "</strong></p>" +
+      '<h4>Observation window</h4><dl class="kv">' +
+      "<dt>Collection cycles</dt><dd>" + esc(v.collection_cycles) + "</dd>" +
+      "<dt>Wall-clock span</dt><dd>" + esc(v.history_span_days) + " days</dd>" +
+      "<dt>Minimum for conclusions</dt><dd>" + esc(v.minimum_history_for_conclusions_days) + " days</dd>" +
+      "<dt>Concepts with history</dt><dd>" + esc(v.concepts_with_history) + "</dd>" +
+      "</dl>" +
+      "<h4>Lead time vs the topic's own 'it became obvious' threshold</h4>" +
+      '<dl class="kv"><dt>Concepts measured</dt><dd>' + esc(lt.n) + "</dd>" +
+      "<dt>Median lead</dt><dd>" + esc(numf(lt.median_lead_cycles)) + " " + esc(lt.unit || "cycles") + "</dd>" +
+      "<dt>Lead &gt; 0</dt><dd>" + esc(lt.positive_leads) + "</dd>" +
+      "<dt>Lead &lt; 0</dt><dd>" + esc(lt.negative_leads) + "</dd></dl>" +
+      '<p style="margin-top:8px">' + esc(lt.message || lt.interpretation || "") + "</p>" +
+      "<h4>Cross-platform confirmation lag</h4>" +
+      '<dl class="kv"><dt>Concepts measured</dt><dd>' + esc(cp.n) + "</dd>" +
+      "<dt>Median lag</dt><dd>" + esc(numf(cp.median_lag_cycles)) + " cycles</dd></dl>" +
+      '<p style="margin-top:8px">' + esc(cp.note || "") + "</p>" +
+      "<h4>False positives (upper bound)</h4>" +
+      '<dl class="kv"><dt>Flagged</dt><dd>' + esc(fp.n_flagged) + "</dd>" +
+      "<dt>Reached own threshold</dt><dd>" + esc(fp.n_reached_own_threshold) + "</dd>" +
+      "<dt>Rate</dt><dd>" + esc(pctf(fp.false_positive_rate)) + "</dd></dl>" +
+      '<p style="margin-top:8px">' + esc(fp.note || "") + "</p>" +
+      "<h4>Permutation test (Kleinberg)</h4>" +
+      '<dl class="kv"><dt>Topics flagged, real ordering</dt><dd>' + esc(pt.real_topics_flagged) + "</dd>" +
+      "<dt>Topics flagged, shuffled ordering</dt><dd>" + esc(pt.permuted_average_flagged) + "</dd>" +
+      "<dt>Trials</dt><dd>" + esc(pt.trials) + "</dd></dl>" +
+      '<p style="margin-top:8px">' + esc(pt.interpretation || "") + "</p>" +
+      '<p style="margin-top:10px;color:var(--ink-faint)">Generated ' + esc(v.generated_at || "") + "</p>";
+  }
+
+  function loadValidation() {
+    return fetch(LOCAL_VALIDATION, { cache: "no-cache" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .catch(function () { return null; })
+      .then(function (loc) {
+        return fetch(REMOTE_VALIDATION, { cache: "no-cache" })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .catch(function () { return null; })
+          .then(function (rem) {
+            if (rem && rem.generated_at && (!loc || (Date.parse(rem.generated_at) >= Date.parse(loc.generated_at)))) {
+              renderValidation(rem); return;
+            }
+            renderValidation(loc);
+          });
+      });
+  }
+
   function renderMethod() {
     var m = S.data.methodology || {};
     var w = m.weights || {};
@@ -593,6 +658,7 @@
       S.data = data;
       populateFilters();
       applyFilters();
+      loadValidation();
       $("#footer-meta").textContent =
         "Version " + (data.version || "?") + " · " +
         (data.stats ? data.stats.observations_total + " observations stored · " : "") +

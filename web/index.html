@@ -53,6 +53,7 @@
     <a href="#lifecycle" class="tab">Trend Lifecycle</a>
     <a href="#regional" class="tab">Regional</a>
     <a href="#sources" class="tab">Source Health</a>
+    <a href="#validation" class="tab">Validation</a>
     <a href="#method" class="tab">Methodology</a>
   </div>
 </nav>
@@ -170,6 +171,14 @@
       <p>Every source, whether it is working right now, when it last ran, and — where a platform has no usable public API — exactly why.</p>
     </div>
     <div id="list-sources" class="source-list"></div>
+  </section>
+
+  <section id="validation" class="panel">
+    <div class="panel-head">
+      <h2>Validation</h2>
+      <p>The system's own audit: whether it detects things before a human would, whether the signal is distinguishable from noise, and how often it is wrong. These numbers are produced by the harness in <code>tools/validate.py</code> and are never hand-written.</p>
+    </div>
+    <div id="validation-body" class="method-body"></div>
   </section>
 
   <section id="method" class="panel">

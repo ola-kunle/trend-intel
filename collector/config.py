@@ -94,6 +94,11 @@ SUGGEST_MODIFIERS = ["", "for", "how to"]
 SUGGEST_SEEDS_PER_CYCLE = 30
 SUGGEST_LANG_CYCLE = ["en", "fi", "es", "en", "fi", "es"]
 
+# Language -> the geography it represents for the regional view. English is
+# deliberately left as GLOBAL because the English-language audience is
+# global; the localised languages map onto their own country.
+LANG_GEO = {"fi": "FI", "es": "ES", "de": "DE", "sv": "SE"}
+
 SUGGEST_MAX_PER_SEED = 8
 
 # Sources whose text is a *topic* rather than a *headline*. Only these may
