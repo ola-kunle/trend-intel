@@ -484,7 +484,7 @@
       '<p style="margin-top:8px">' + esc(lt.message || lt.interpretation || "") + "</p>" +
       "<h4>Lead time against manual browsing</h4>" +
       (function () {
-        var r = d.production_detector_lead_time || {};
+        var r = v.production_detector_lead_time || {};
         if (!r.n) {
           return "<p>Not measurable yet: no topic has both a production-detector " +
             "emerging classification and an appearance on the manual baseline. " +
