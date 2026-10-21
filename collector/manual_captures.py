@@ -193,7 +193,8 @@ def capture_observations(conn, captures=None):
             key, _how = concepts.resolve_tag(tag)
             if not key:
                 # An unfamiliar tag is a discovery, not a discard.
-                key, _how = concepts.resolve_or_discover(tag, allow_mint=True)
+                key, _how = concepts.resolve_or_discover(tag, allow_mint=True,
+                                                         require_lexicon=False)
             if not key:
                 continue
             rows.append({

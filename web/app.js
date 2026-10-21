@@ -861,19 +861,41 @@
       cf.addEventListener("submit", function (ev) {
         ev.preventDefault();
         var status = $("#capture-status");
-        var body = new URLSearchParams(new FormData(cf));
-        body.set("form-name", "captures");
-        status.textContent = "Saving…";
-        fetch("/", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: body.toString() })
-          .then(function (r) {
-            if (!r.ok) throw new Error("HTTP " + r.status);
-            status.textContent = "Capture saved. It will appear in the next collection cycle.";
-            cf.reset();
-          })
-          .catch(function (e) {
-            status.textContent = "Could not save: " + e.message +
-              " — use \"python -m collector.capture\" on your machine instead.";
-          });
+        var tags = ($("#cap-tags").value || "").trim();
+        if (!tags) { status.textContent = "Paste a list first."; return; }
+        var entry = {
+          tags: tags.split(/[\n,;\t]+/).map(function (t) {
+            return t.trim().replace(/^\d+\s*[\.\)\:-]?\s*/, "").replace(/^[#@]/, "").toLowerCase();
+          }).filter(Boolean),
+          source: ($("#cap-source").value || "other"),
+          region: ($("#cap-region").value || "GLOBAL"),
+          notes: ($("#cap-notes").value || ""),
+          captured_at: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
+          capture_id: "cap_" + Date.now()
+        };
+        var plain = entry.tags.join("\n");
+        var done = function (msg) {
+          status.innerHTML = msg + ' &nbsp;&middot;&nbsp; then run <code>python -m collector.capture --clipboard</code>';
+          renderCaptures();
+        };
+        // 1. copy the tags so the CLI can pick them up
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(plain).then(
+            function () { done("Hashtags copied to your clipboard."); },
+            function () { done("Copy the hashtags manually."); }
+          );
+        } else {
+          done("Copy the hashtags manually.");
+        }
+        // 2. also offer a file, which is the more durable path
+        try {
+          var blob = new Blob([JSON.stringify([entry], null, 2)], { type: "application/json" });
+          var a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = "trend-capture-" + entry.captured_at.slice(0, 10) + ".json";
+          document.body.appendChild(a); a.click();
+          setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+        } catch (e) {}
       });
     }
     $("#theme-toggle").addEventListener("click", function () {

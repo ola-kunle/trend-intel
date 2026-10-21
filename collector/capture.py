@@ -22,6 +22,7 @@ Run it once a week, in the browser, on the page you would have checked anyway.
 """
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -39,7 +40,29 @@ Paste the trending hashtags, one per line (or comma separated).
 def read_input(args):
     if args.file:
         with open(args.file, "r", encoding="utf-8") as fh:
-            return fh.read()
+            raw = fh.read()
+        # the dashboard exports a JSON array of capture entries; accept it
+        stripped = raw.lstrip()
+        if stripped.startswith("["):
+            try:
+                entries = json.loads(raw)
+                if isinstance(entries, list) and entries:
+                    return "\n".join(
+                        str(t) for e in entries for t in (e.get("tags") or []))
+            except Exception:
+                pass
+        return raw
+    if args.clipboard:
+        try:
+            import subprocess
+            out = subprocess.run(["pbpaste"], capture_output=True, text=True,
+                                 timeout=10)
+            if out.returncode == 0 and out.stdout.strip():
+                return out.stdout
+            print("Clipboard was empty or unreadable.", file=sys.stderr)
+        except Exception as exc:
+            print(f"Could not read the clipboard: {exc}", file=sys.stderr)
+        return ""
     if not sys.stdin.isatty():
         return sys.stdin.read()
     print(BANNER)
@@ -55,6 +78,8 @@ def main():
     ap.add_argument("--region", default="GLOBAL",
                     help="geography the list covers (GLOBAL, US, FI, ES, ...)")
     ap.add_argument("--file", help="read the list from a file instead of stdin")
+    ap.add_argument("--clipboard", action="store_true",
+                    help="read the list from the system clipboard (macOS pbpaste)")
     ap.add_argument("--notes", default="", help="free-text note stored with the capture")
     args = ap.parse_args()
 

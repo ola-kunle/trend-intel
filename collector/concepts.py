@@ -151,7 +151,8 @@ def resolve_tag(tag):
     return None, None
 
 
-def resolve_or_discover(text, *, min_overlap=0.75, allow_mint=True):
+def resolve_or_discover(text, *, min_overlap=0.75, allow_mint=True,
+                        require_lexicon=True):
     """Resolve, or mint a stable key for an unseen concept.
 
     Auto-discovery is gated on the vertical lexicon: a phrase only becomes a
@@ -165,7 +166,9 @@ def resolve_or_discover(text, *, min_overlap=0.75, allow_mint=True):
     if not allow_mint:
         return None, None
     norm = ontology.normalise(text)
-    if not norm or not ontology.discoverable(norm):
+    if not norm:
+        return None, None
+    if require_lexicon and not ontology.discoverable(norm):
         return None, None
     # A discovered concept needs a stable identity across cycles. Slug +
     # normalisation is deterministic, so the same phrase always maps to the

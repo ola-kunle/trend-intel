@@ -204,6 +204,50 @@ export YOUTUBE_API_KEY=...          # free 10,000 units/day
 Until then they report themselves as "awaiting authorisation" in Source
 Health, so their absence is visible rather than silent.
 
+### TikTok and Instagram: what is actually possible
+
+Verified against the live platforms on 21 October 2026, from both a datacentre IP
+and a residential one, in a real browser:
+
+| Surface | Result |
+|---|---|
+| `creative_radar_api/v1/popular_trend/hashtag/list` | `40101 no permission` |
+| `cc_portal_api/api/trendsTcc` (what the Creative Center page itself calls) | **HTTP 500** for anonymous clients |
+| The three hashtags that visibly render | identical across fresh sessions with zero table rows — shipped inside the frontend bundle, **not live data** |
+| `tiktok.com/csi` (Creator Search Insights — rising searches) | **302 → 404**; the surface no longer exists |
+| `instagram.com/explore/tags/<tag>/` logged off | **302 → login wall** |
+| Instagram's internal `topsearch` endpoints | 404 |
+
+**Instagram is officially possible** and the adapter is built. It needs a Meta app
+with `instagram_basic`, the **Instagram Public Content Access** feature, App Review,
+a Business/Creator account and Business Verification. Meta's own limit shapes the
+design: **30 unique hashtags per rolling 7 days**, and re-querying a tag already
+inside that window is free — so the collector tracks the budget locally
+(`store.ig_budget_status`) and spends it deliberately.
+
+The tag queue is seeded **discovery-first**: topics the other sources just found,
+then corroborated topics, then the curated seed list. That ordering matters,
+because Instagram cannot discover trends. The useful question to ask it is *"how
+big is the audience for the thing we found elsewhere?"* — which turns a
+discovery-only source into a size-confirmation source.
+
+**TikTok has no automated public trend data**, so the system uses a
+**human-in-the-loop capture** instead: you look at Creative Center in your own
+logged-in session, and the system does the part a human cannot — timestamp the
+observation and track the topic's growth over time, with the same baseline and
+acceleration treatment as every other source.
+
+```bash
+# paste from the browser, or use the Capture tab on the dashboard
+python -m collector.capture --clipboard --source tiktok
+python -m collector.capture --file trending.txt
+```
+
+The dashboard's Capture tab does the same thing without a backend: it copies the
+hashtags to your clipboard and offers a JSON file, because Netlify Forms turned
+out to be unavailable on this account (verified with a minimal probe form — even
+a textbook-correct one was not detected).
+
 **What this system will not do:** defeat a CAPTCHA, forge a request signature, solve a
 challenge, or use a residential proxy to defeat a WAF. Those are access-control
 circumvention, and they convert a technical problem into a legal one for a business that
