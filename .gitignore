@@ -1,4 +1,6 @@
 .venv/
+data/observations.sqlite-wal
+data/observations.sqlite-shm
 __pycache__/
 *.pyc
 web/data/latest.json
