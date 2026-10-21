@@ -180,6 +180,28 @@ def collect(conn, only=None, quick=False, cycle_id=0):
     # --- TikTok (best effort) ----------------------------------------------
     run("tiktok_creative", sources.tiktok_creative)
 
+    # --- New research + social surfaces -------------------------------------
+    pub_q, cursor = _shortlist(config.PUBMED_TOPICS, cursor,
+                               3 if quick else config.PUBMED_TOPICS_PER_CYCLE)
+    run("pubmed_counts", sources.pubmed_counts, pub_q)
+
+    arx_q, cursor = _shortlist(config.ARXIV_TOPICS, cursor,
+                               2 if quick else config.ARXIV_TOPICS_PER_CYCLE)
+    run("arxiv", sources.arxiv, arx_q)
+
+    mst_q, cursor = _shortlist(seeds, cursor,
+                                4 if quick else config.MASTODON_TOPICS_PER_CYCLE)
+    run("mastodon_search", sources.mastodon_search, mst_q)
+
+    lem_q, cursor = _shortlist(seeds, cursor,
+                                2 if quick else config.LEMMY_TOPICS_PER_CYCLE)
+    run("lemmy_search", sources.lemmy_search, lem_q)
+
+    # Key-gated official APIs. Inert until a token is supplied; they report
+    # themselves as awaiting authorisation rather than silently disappearing.
+    run("brave_search", sources.brave_search, None, [], "US")
+    run("youtube_data_api", sources.youtube_data_api, None, [], "US")
+
     # --- Reddit (last: it is heavily rate limited and must not starve the
     #     other sources of the time budget) ---------------------------------
     subs, cursor = _shortlist(config.REDDIT_SUBREDDITS, cursor,
@@ -535,6 +557,12 @@ SOURCE_LABELS = {
     "itunes_podcasts": "iTunes / Apple Podcasts",
     "hn_algolia": "Hacker News (Algolia)",
     "tiktok_creative": "TikTok Creative Center",
+    "pubmed_counts": "PubMed paper counts (year over year)",
+    "mastodon_search": "Mastodon hashtag search",
+    "lemmy_search": "Lemmy search",
+    "arxiv": "arXiv preprints",
+    "brave_search": "Brave Search API (authorised)",
+    "youtube_data_api": "YouTube Data API (authorised)",
     "instagram_hashtag": "Instagram hashtag search (authorised)",
     "threads_search": "Threads keyword search (authorised)",
     "pinterest_trends": "Pinterest Trends (authorised)",

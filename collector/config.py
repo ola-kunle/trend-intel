@@ -107,6 +107,7 @@ SUGGEST_MAX_PER_SEED = 8
 # fragments.
 MINT_ALLOWED_SOURCES = {
     "europepmc",       # research paper titles are genuinely topic-like
+    "arxiv",           # preprint titles are too
     "youtube_search",  # video titles describe a subject
     "wikipedia_views", # article titles are canonical
 }
@@ -132,7 +133,37 @@ SOURCES = {
     "itunes_podcasts": True,
     "hn_algolia": True,
     "tiktok_creative": True,
+    "pubmed_counts": True,
+    "mastodon_search": True,
+    "lemmy_search": True,
+    "arxiv": True,
+    "brave_search": True,
+    "youtube_data_api": True,
 }
+
+# --- New-source rotation budgets ------------------------------------------
+
+# PubMed year-over-year counts are the most expensive new source (one
+# request per year per topic), so it runs on a small rotating set.
+PUBMED_TOPICS_PER_CYCLE = 8
+PUBMED_TOPICS = [
+    "hypnosis", "hypnotherapy", "somatic experiencing", "nervous system regulation",
+    "subconscious", "mindfulness", "breathwork", "meditation",
+    "trauma focused therapy", "emdr", "psychedelic therapy", "ketamine",
+    "attachment theory", "self compassion", "burnout", "sleep hygiene",
+    "polyvagal", "inner child", "reiki", "manifestation",
+    "cbt", "act therapy", "neuroplasticity", "digital mental health",
+    "maternal mental health", "adhd adults", "perimenopause", "grief therapy",
+]
+
+MASTODON_TOPICS_PER_CYCLE = 10
+LEMMY_TOPICS_PER_CYCLE = 6
+ARXIV_TOPICS_PER_CYCLE = 6
+ARXIV_TOPICS = [
+    "self reflection", "digital wellbeing", "affective computing",
+    "therapeutic chatbot", "meditation", "neuroscience", "human computer interaction",
+    "emotion recognition", "mental health",
+]
 
 # --- Optional enrichment ---------------------------------------------------
 #

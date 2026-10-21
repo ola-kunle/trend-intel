@@ -64,41 +64,110 @@
 
   /* ---------------------------------------------------------------- data */
 
+  /* ---------------------------------------------------------------- data */
+
+  // A fetch that stalls without erroring would otherwise leave the page on
+  // "loading…" forever, because the render waited for the remote copy. Every
+  // request therefore carries a timeout, and the page renders from whichever
+  // copy arrives first.
+  function fetchWithTimeout(url, ms, opts) {
+    var ctrl = (typeof AbortController !== "undefined") ? new AbortController() : null;
+    var timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, ms);
+    var o = opts || {};
+    if (ctrl) o.signal = ctrl.signal;
+    return fetch(url, o)
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .catch(function () { return null; })
+      .then(function (v) { clearTimeout(timer); return v; });
+  }
+
+  function ts(d) { return d ? (Date.parse(d.generated_at) || 0) : 0; }
+
+  function applyData(d, state) {
+    if (!d) return false;
+    var err = $("#load-error");
+    if (err) err.classList.add("hidden");
+    // Never downgrade to older data.
+    if (S.data && ts(d) < ts(S.data)) return false;
+    S.data = d;
+    setFeed(state, d);
+    populateFilters();
+    applyFilters();
+    document.body.classList.add("data-loaded");
+    hideSkeleton();
+    return true;
+  }
+
   function loadData(force) {
-    var local = fetch(LOCAL, { cache: force ? "reload" : "default" })
-      .then(function (r) { return r.ok ? r.json() : null; })
-      .catch(function () { return null; });
+    showSkeleton();
+    var stamp = force ? ("?t=" + Date.now()) : "";
+    var localP = fetchWithTimeout(LOCAL + (force ? stamp : ""), 8000,
+      { cache: force ? "reload" : "default" });
+    var remoteP = fetchWithTimeout(REMOTE + stamp, 8000,
+      { cache: force ? "reload" : "no-cache" });
 
-    var remote = fetch(REMOTE + (force ? "?t=" + Date.now() : ""), { cache: force ? "reload" : "no-cache" })
-      .then(function (r) { return r.ok ? r.json() : null; })
-      .catch(function () { return null; });
+    // Render from whichever arrives first; upgrade if the other is newer.
+    localP.then(function (loc) { if (loc) applyData(loc, "bundled"); });
+    remoteP.then(function (rem) { if (rem) applyData(rem, "live"); });
 
-    return remote.then(function (rem) {
-      return local.then(function (loc) {
-        if (rem && rem.generated_at) {
-          var rf = Date.parse(rem.generated_at) || 0;
-          var lf = loc ? (Date.parse(loc.generated_at) || 0) : 0;
-          if (rf >= lf) { setFeed("live", rem); return rem; }
-          if (loc) { setFeed("stale", loc); return loc; }
-          setFeed("live", rem); return rem;
-        }
-        if (loc) { setFeed("stale", loc); return loc; }
-        setFeed("error", null);
-        throw new Error("no data");
-      });
+    return Promise.all([localP, remoteP]).then(function (res) {
+      var loc = res[0], rem = res[1];
+      if (rem && loc) {
+        applyData(ts(rem) >= ts(loc) ? rem : loc, ts(rem) >= ts(loc) ? "live" : "bundled");
+      } else if (rem) {
+        applyData(rem, "live");
+      } else if (loc) {
+        applyData(loc, "bundled");
+      } else {
+        showError("Could not reach the live data host and no bundled snapshot was available.");
+      }
+      return S.data;
+    }).catch(function (err) {
+      showError(err && err.message ? err.message : "Unknown error");
+      return null;
     });
   }
 
   function setFeed(state, data) {
     var el = $("#meta-feed");
     if (!el) return;
-    el.className = "feed-state " + (state === "live" ? "live" : state === "stale" ? "stale" : "");
-    el.textContent = state === "live" ? "live"
-      : state === "stale" ? "bundled copy"
-      : "unavailable";
+    var age = data && data.generated_at ? (Date.now() - Date.parse(data.generated_at)) / 3600000 : null;
+    var cls = "feed-state ", txt = state;
+    if (state === "live") {
+      if (age != null && age > 6) { cls += "stale"; txt = "live \u00b7 stale"; }
+      else { cls += "live"; txt = "live"; }
+    } else if (state === "bundled") {
+      cls += "stale"; txt = "bundled copy";
+    } else {
+      cls += "err"; txt = "unavailable";
+    }
+    el.className = cls;
+    el.textContent = txt;
     if (data && data.generated_at) {
       $("#meta-updated").textContent = fmtTime(data.generated_at) + "  (" + ago(data.generated_at) + ")";
     }
+    var strip = $("#strip-updated");
+    if (strip && data && data.generated_at) strip.textContent = "data through " + fmtTime(data.generated_at);
+  }
+
+  function showSkeleton() {
+    document.body.classList.remove("data-loaded");
+    var el = $("#skeleton");
+    if (el) el.classList.remove("hidden");
+  }
+
+  function hideSkeleton() {
+    var el = $("#skeleton");
+    if (el) el.classList.add("hidden");
+  }
+
+  function showError(msg) {
+    hideSkeleton();
+    var el = $("#load-error");
+    if (!el) return;
+    el.classList.remove("hidden");
+    $("#load-error-msg").textContent = msg || "Unknown error";
+    setFeed("error", null);
   }
 
   /* ------------------------------------------------------------- filters */
@@ -206,10 +275,28 @@
     var el = $("#" + elId);
     if (!el) return;
     if (!items || !items.length) {
-      el.innerHTML = '<div class="empty">' + esc(emptyMsg) + "</div>";
+      el.innerHTML = emptyState(emptyMsg);
       return;
     }
     el.innerHTML = items.map(card).join("");
+  }
+
+  function emptyState(msg) {
+    var st = (S.data && S.data.stats) || {};
+    var win = st.window_days || 14;
+    var hrs = win * 24;
+    var last = S.data && S.data.generated_at
+      ? fmtTime(S.data.generated_at) + " (" + ago(S.data.generated_at) + ")" : "unknown";
+    var healthy = (S.data && S.data.stats && S.data.stats.sources_ok) || 0;
+    var total = (S.data && S.data.stats && S.data.stats.sources_total) || 0;
+    return '<div class="empty">' +
+      '<div class="empty-icon">\u25cb</div>' +
+      "<p>" + esc(msg) + "</p>" +
+      '<p class="empty-meta">No qualifying signal in the last ' + hrs + " hours.</p>" +
+      '<p class="empty-meta">Last successful run: <b>' + esc(last) + "</b> \u00b7 " + healthy + "/" + total + " sources healthy \u00b7 " +
+      esc(st.concepts_total || 0) + " concepts monitored</p>" +
+      '<p class="empty-meta">The collector is running; this panel fills as a topic accumulates a baseline and corroboration.</p>' +
+      "</div>";
   }
 
   function renderStatbar() {
@@ -260,7 +347,7 @@
     });
     var el = $("#list-phrasings");
     if (!ps.length) {
-      el.innerHTML = '<div class="empty">No newly observed phrasings in the last 72 hours. This panel fills as the collector accumulates runs.</div>';
+      el.innerHTML = emptyState("No newly observed phrasings in the last 72 hours. This panel fills as the collector accumulates runs.");
       return;
     }
     el.innerHTML = ps.map(function (p) {
@@ -285,7 +372,7 @@
       return true;
     });
     var el = $("#list-opportunities");
-    if (!ops.length) { el.innerHTML = '<div class="empty">No opportunities yet.</div>'; return; }
+    if (!ops.length) { el.innerHTML = emptyState("No evidence-backed opportunities yet."); return; }
     el.innerHTML = ops.slice(0, 60).map(function (o) {
       return '<div class="opp"><h4>' + esc(o.concept) + "</h4>" +
         '<div class="ang">' + esc(o.angle) + "</div>" +
@@ -323,7 +410,7 @@
     var order = geos.map(function (g) { return g.key; });
     Object.keys(reg).forEach(function (k) { if (order.indexOf(k) < 0) order.push(k); });
     var el = $("#regional-grid");
-    if (!order.length) { el.innerHTML = '<div class="empty">No regional data yet.</div>'; return; }
+    if (!order.length) { el.innerHTML = emptyState("No regional data yet."); return; }
     el.innerHTML = order.map(function (k) {
       var label = (geos.filter(function (g) { return g.key === k; })[0] || {}).label || k;
       var items = (reg[k] || []).slice().sort(function (a, b) { return b.score - a.score; }).slice(0, 8);
@@ -340,7 +427,7 @@
   function renderSources() {
     var list = S.data.source_health || [];
     var el = $("#list-sources");
-    if (!list.length) { el.innerHTML = '<div class="empty">No source status recorded.</div>'; return; }
+    if (!list.length) { el.innerHTML = emptyState("No source status recorded."); return; }
     el.innerHTML = list.map(function (s) {
       var cls = s.ok ? "ok" : (s.runs ? "bad" : "idle");
       var meta = [];
@@ -451,6 +538,48 @@
       "</ul>";
   }
 
+  function renderSourceStrip() {
+    var el = $("#source-strip");
+    if (!el) return;
+    var list = (S.data && S.data.source_health) || [];
+    if (!list.length) {
+      el.innerHTML = '<div class="strip-skeleton"><span></span><span></span><span></span><span></span></div>';
+      return;
+    }
+    var ok = 0, degraded = 0, down = 0;
+    list.forEach(function (s2) {
+      if (s2.ok) ok++;
+      else if (s2.runs) degraded++;
+      else down++;
+    });
+    var lastRun = null;
+    list.forEach(function (s2) {
+      var h = (s2.history || []).filter(function (x) { return x.ok; });
+      if (h.length) {
+        var t = Date.parse(h[h.length - 1].ts);
+        if (!lastRun || t > lastRun) lastRun = t;
+      }
+    });
+    var dots = list.slice().sort(function (a, b) {
+      var rank = function (x) { return x.ok ? 0 : (x.runs ? 1 : 2); };
+      return rank(a) - rank(b);
+    }).map(function (s2) {
+      var k = s2.ok ? "ok" : (s2.runs ? "bad" : "idle");
+      var t = s2.ok ? "healthy" : (s2.runs ? "degraded" : "awaiting authorisation");
+      return '<a class="dot-chip" href="#sources" title="' + esc(s2.label) + " \u2014 " + t + (s2.message ? ": " + esc(s2.message) : "") + '">' +
+        '<span class="dot ' + k + '"></span><span class="dot-name">' + esc(SOURCE_SHORT[s2.source] || s2.label) + "</span></a>";
+    }).join("");
+    el.innerHTML =
+      '<div class="strip-lead">' +
+      '<span class="strip-title">Sources</span>' +
+      '<span class="strip-count"><b class="' + (down ? "warn" : "good") + '">' + ok + "/" + list.length + "</b> live</span>" +
+      (degraded ? '<span class="strip-count"><b class="warn">' + degraded + "</b> degraded</span>" : "") +
+      (down ? '<span class="strip-count"><b class="warn">' + down + "</b> awaiting access</span>" : "") +
+      '<span class="strip-time" id="strip-updated">' + (lastRun ? "last successful run " + ago(new Date(lastRun).toISOString()) : "") + "</span>" +
+      "</div>" +
+      '<div class="strip-dots">' + dots + "</div>";
+  }
+
   function renderAll() {
     var d = S.data;
     S.byKey = {};
@@ -463,12 +592,13 @@
     }
 
     renderStatbar();
+    renderSourceStrip();
     var emergingHtml = "";
     var emergingItems = pick(sec.emerging);
     if (emergingItems.length) {
       emergingHtml = emergingItems.map(card).join("");
     } else {
-      emergingHtml = '<div class="empty">No topic currently meets the emerging bar. That is a real result, not a failure — it means nothing has crossed the acceleration and corroboration thresholds yet. History builds with every collection cycle.</div>';
+      emergingHtml = emptyState("No topic currently meets the emerging bar. That is a real result, not a failure \u2014 nothing has crossed the acceleration and corroboration thresholds yet. History builds with every collection cycle.");
     }
     var newlyItems = pick(sec.newly_observed).slice(0, 24);
     if (newlyItems.length) {
@@ -615,6 +745,26 @@
     opts("#f-tier", Object.keys(d.evidence_tiers || {}), function (k) { return d.evidence_tiers[k].label; });
   }
 
+  function applyTheme(theme) {
+    document.documentElement.setAttribute("data-theme", theme);
+    try { localStorage.setItem("ti-theme", theme); } catch (e) {}
+    var btn = $("#theme-toggle");
+    if (btn) {
+      btn.textContent = theme === "light" ? "\u25d1" : "\u25d0";
+      btn.setAttribute("aria-label", theme === "light" ? "Switch to dark theme" : "Switch to light theme");
+      btn.title = theme === "light" ? "Dark theme" : "Light theme";
+    }
+  }
+
+  function initTheme() {
+    var saved = null;
+    try { saved = localStorage.getItem("ti-theme"); } catch (e) {}
+    if (!saved) {
+      saved = (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) ? "light" : "dark";
+    }
+    applyTheme(saved);
+  }
+
   function bind() {
     $("#f-search").addEventListener("input", function (e) { S.filters.q = e.target.value; applyFilters(); });
     ["#f-category", "#f-geo", "#f-source", "#f-lifecycle", "#f-confidence", "#f-tier"].forEach(function (sel) {
@@ -632,7 +782,28 @@
       $("#f-minscore").value = "0";
       applyFilters();
     });
-    $("#refresh").addEventListener("click", function () { boot(true); });
+    $("#refresh").addEventListener("click", function () {
+      var btn = $("#refresh");
+      if (btn.classList.contains("busy")) return;
+      btn.classList.add("busy");
+      btn.textContent = "\u21bb Refreshing\u2026";
+      var t0 = Date.now();
+      boot(true).then(function () {
+        var ms = Date.now() - t0;
+        var ok = !!S.data;
+        btn.classList.remove("busy");
+        btn.classList.toggle("ok", ok);
+        btn.textContent = ok ? "\u2713 Updated" : "\u2717 Failed";
+        setTimeout(function () {
+          btn.classList.remove("ok");
+          btn.textContent = "\u21bb Refresh";
+        }, 2600);
+      });
+    });
+    $("#theme-toggle").addEventListener("click", function () {
+      var cur = document.documentElement.getAttribute("data-theme") || "dark";
+      applyTheme(cur === "light" ? "dark" : "light");
+    });
     $("#drawer-close").addEventListener("click", closeDrawer);
     $("#scrim").addEventListener("click", closeDrawer);
     document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeDrawer(); });
@@ -670,8 +841,12 @@
   }
 
   document.addEventListener("DOMContentLoaded", function () {
+    initTheme();
     bind();
     boot(false);
     setInterval(function () { boot(false); }, 10 * 60 * 1000);
+    document.addEventListener("visibilitychange", function () {
+      if (!document.hidden) boot(false);
+    });
   });
 })();

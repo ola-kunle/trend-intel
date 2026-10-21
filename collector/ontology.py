@@ -70,6 +70,7 @@ SEEDS = [
     ("quantum hypnosis", "hypnosis", 1.00),
     ("quantum healing hypnosis technique", "hypnosis", 1.00),
     ("qhht", "hypnosis", 0.95),
+    ("hypnosis", "hypnosis", 1.00),
     ("hypnotherapy", "hypnosis", 1.00),
     ("past life regression", "hypnosis", 0.95),
     ("past life therapy", "hypnosis", 0.90),

@@ -782,3 +782,274 @@ def pinterest_trends(token=None, regions=("US",)):
                        "series": item.get("time_series"), "resolution": how},
             ))
     return out, {"items": len(out)}
+
+
+# ---------------------------------------------------------------------------
+# 14. PubMed E-utilities - research volume with an external baseline
+# ---------------------------------------------------------------------------
+
+def pubmed_counts(queries, years=None):
+    """Paper counts per year for each topic, straight from PubMed.
+
+    This is the one signal in the system with a baseline the collector does
+    not have to build: the research literature's own year-over-year movement.
+    A topic whose paper count goes 4 -> 19 -> 31 across three years is
+    growing research attention whether or not we have been watching it, which
+    is exactly what "emerging" should mean.
+
+    Counts are stored as a growth ratio so the detector can treat a sustained
+    rise as a trend in its own right.
+    """
+    import datetime
+    this_year = datetime.datetime.now(datetime.timezone.utc).year
+    years = years or [this_year - 2, this_year - 1, this_year]
+    out = []
+    for q in queries:
+        counts = {}
+        for y in years:
+            url = ("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?"
+                   + urllib.parse.urlencode({
+                       "db": "pubmed", "term": q, "retmode": "json",
+                       "mindate": str(y), "maxdate": str(y), "datetype": "pdat"}))
+            try:
+                data = fetch_json(url, min_interval=0.4)
+            except FetchError:
+                continue
+            try:
+                counts[y] = float(data["esearchresult"]["count"])
+            except Exception:
+                counts[y] = 0.0
+        if len(counts) < 2:
+            continue
+        ys = sorted(counts)
+        latest = counts[ys[-1]]
+        prior = counts[ys[-2]]
+        growth = (latest - prior) / prior if prior > 0 else (1.0 if latest > 0 else 0.0)
+        key, how = concepts.resolve_or_discover(q, allow_mint=False)
+        if not key:
+            continue
+        out.append(_row(
+            source="pubmed_counts", geo="GLOBAL", lang="en", surface="academic",
+            concept=key, raw_text=q, metric="research_growth", value=growth,
+            url="https://pubmed.ncbi.nlm.nih.gov/?term=" + urllib.parse.quote(q),
+            extra={"counts_by_year": {str(k): int(v) for k, v in counts.items()},
+                   "years": ys, "resolution": how},
+        ))
+    return out, {"queries": len(queries)}
+
+
+# ---------------------------------------------------------------------------
+# 15. Mastodon v2 search - hashtag discovery with usage history
+# ---------------------------------------------------------------------------
+
+def mastodon_search(queries):
+    """Hashtag search across the federated network.
+
+    Returns hashtags matching a term together with their recent usage, which
+    is a genuine social-surface signal: a hashtag appearing with rising use
+    across independent accounts is the social equivalent of a rising query.
+    """
+    out = []
+    for q in queries:
+        url = ("https://mastodon.social/api/v2/search?"
+               + urllib.parse.urlencode({"q": q, "type": "hashtags", "limit": "20"}))
+        try:
+            data = fetch_json(url, min_interval=0.6)
+        except FetchError:
+            continue
+        for h in (data.get("hashtags") or []):
+            name = h.get("name") or ""
+            if not name:
+                continue
+            hist = h.get("history") or []
+            uses = 0.0
+            if hist:
+                try:
+                    uses = float(hist[-1].get("uses") or 0)
+                except Exception:
+                    uses = 0.0
+            key, how = concepts.resolve_or_discover(name, allow_mint=False)
+            if not key:
+                continue
+            out.append(_row(
+                source="mastodon_search", geo="GLOBAL", lang="en", surface="social",
+                concept=key, raw_text=name, metric="hashtag_uses", value=uses,
+                url="https://mastodon.social/tags/" + name,
+                extra={"query": q, "history": hist[-3:], "resolution": how},
+            ))
+    return out, {"queries": len(queries)}
+
+
+# ---------------------------------------------------------------------------
+# 16. Lemmy search - a second federated social surface
+# ---------------------------------------------------------------------------
+
+def lemmy_search(queries):
+    """Public Lemmy instance search.
+
+    A third social surface alongside Reddit and Mastodon, which makes
+    cross-platform corroboration meaningful rather than accidental.
+    """
+    out = []
+    for q in queries:
+        url = ("https://lemmy.world/api/v3/search?"
+               + urllib.parse.urlencode({"q": q, "type_": "Posts",
+                                         "limit": "20", "sort": "New"}))
+        try:
+            data = fetch_json(url, min_interval=0.8)
+        except FetchError:
+            continue
+        for post in (data.get("posts") or []):
+            p = post.get("post") or {}
+            title = p.get("name") or ""
+            if not title:
+                continue
+            key, how = concepts.resolve_or_discover(title, allow_mint=False)
+            if not key:
+                continue
+            comm = post.get("community") or {}
+            out.append(_row(
+                source="lemmy_search", geo="GLOBAL", lang="en", surface="social",
+                concept=key, raw_text=title, metric="comments",
+                value=float(p.get("comments_count") or 0),
+                url=p.get("url") or ("https://lemmy.world/post/" + str(p.get("id"))),
+                extra={"community": comm.get("name"), "published": p.get("published"),
+                       "query": q, "resolution": how,
+                       "intent": ontology.classify_intent(title)},
+            ))
+    return out, {"queries": len(queries)}
+
+
+# ---------------------------------------------------------------------------
+# 17. arXiv - preprints, and the earliest research signal
+# ---------------------------------------------------------------------------
+
+def arxiv(queries):
+    """Newest preprints per topic.
+
+    arXiv covers fields the medical indexes do not, and preprints lead
+    peer-reviewed publication by months - so a new term appearing here is
+    one of the earliest research signals available for free.
+    """
+    import xml.etree.ElementTree as _ET
+    atom = {"a": "http://www.w3.org/2005/Atom"}
+    out = []
+    for q in queries:
+        term = q.replace('"', " ").replace(" ", " AND ")
+        url = ("https://export.arxiv.org/api/query?"
+               + urllib.parse.urlencode({
+                   "search_query": "all:" + term, "max_results": "5",
+                   "sortBy": "submittedDate", "sortOrder": "descending"}))
+        try:
+            body = fetch(url, min_interval=1.0)[1]
+            root = _ET.fromstring(body)
+        except (FetchError, Exception):
+            continue
+        for entry in root.findall("a:entry", atom):
+            title = (entry.findtext("a:title", "", atom) or "").strip().replace("\n", " ")
+            if not title:
+                continue
+            key, how = concepts.resolve_or_discover(title, allow_mint=_mint_allowed("arxiv"))
+            if not key:
+                continue
+            out.append(_row(
+                source="arxiv", geo="GLOBAL", lang="en", surface="academic",
+                concept=key, raw_text=title[:300], metric="count", value=1.0,
+                url=(entry.findtext("a:id", "", atom) or ""),
+                extra={"published": entry.findtext("a:published", "", atom),
+                       "query": q, "resolution": how},
+            ))
+    return out, {"queries": len(queries)}
+
+
+# ---------------------------------------------------------------------------
+# 18. Brave Search API - geo-targeted search and suggestions (needs a key)
+# ---------------------------------------------------------------------------
+
+def brave_search(token=None, queries=None, region="US"):
+    """Brave Search API.
+
+    The one free source that can be localised *by country* rather than by
+    language: Google's own autocomplete endpoint ignores the country
+    parameter. Requires a Brave API key (free tier includes a monthly
+    credit); stays inert until one is supplied.
+    """
+    token = token or os.environ.get("BRAVE_API_KEY")
+    if not token:
+        raise FetchError("brave_search", None,
+                         "awaiting authorisation: BRAVE_API_KEY not set "
+                         "(free monthly credit available)")
+    out = []
+    for q in queries or []:
+        url = ("https://api.search.brave.com/res/v1/web/search?"
+               + urllib.parse.urlencode({"q": q, "count": 10, "country": region,
+                                         "search_lang": "en", "spellcheck": 1,
+                                         "extra_snippets": "true"}))
+        try:
+            data = fetch_json(url, min_interval=0.5,
+                              headers={"X-Subscription-Token": token,
+                                       "Accept": "application/json"})
+        except FetchError:
+            continue
+        for r in ((data.get("web") or {}).get("results") or []):
+            title = r.get("title") or ""
+            if not title:
+                continue
+            key, how = concepts.resolve_or_discover(title, allow_mint=False)
+            if not key:
+                continue
+            out.append(_row(
+                source="brave_search", geo=region, lang="en", surface="search",
+                concept=key, raw_text=title, metric="count", value=1.0,
+                url=r.get("url"),
+                extra={"query": q, "region": region, "resolution": how,
+                       "intent": ontology.classify_intent(title)},
+            ))
+    return out, {"queries": len(queries)}
+
+
+# ---------------------------------------------------------------------------
+# 19. YouTube Data API (needs a key) - creator counts and audience questions
+# ---------------------------------------------------------------------------
+
+def youtube_data_api(key=None, queries=None, region="US"):
+    """Official YouTube Data API.
+
+    Gives dated search results without scraping, plus comment threads for
+    audience questions. Requires a Google API key; stays inert until one is
+    supplied.
+    """
+    key = key or os.environ.get("YOUTUBE_API_KEY")
+    if not key:
+        raise FetchError("youtube_data_api", None,
+                         "awaiting authorisation: YOUTUBE_API_KEY not set "
+                         "(YouTube Data API free quota: 10,000 units/day)")
+    out = []
+    for q in queries or []:
+        url = ("https://www.googleapis.com/youtube/v3/search?"
+               + urllib.parse.urlencode({"part": "snippet", "q": q, "type": "video",
+                                         "order": "date", "maxResults": "25",
+                                         "regionCode": region, "key": key}))
+        try:
+            data = fetch_json(url, min_interval=0.4)
+        except FetchError:
+            continue
+        for item in (data.get("items") or []):
+            snip = item.get("snippet") or {}
+            title = snip.get("title") or ""
+            if not title:
+                continue
+            key_c, how = concepts.resolve_or_discover(title, allow_mint=False)
+            if not key_c:
+                continue
+            out.append(_row(
+                source="youtube_data_api", geo=region, lang="en", surface="video",
+                concept=key_c, raw_text=title, metric="count", value=1.0,
+                url="https://www.youtube.com/watch?v=" + str(item.get("id")),
+                extra={"channel": snip.get("channelTitle"),
+                       "channel_id": snip.get("channelId"),
+                       "published": snip.get("publishedAt"), "query": q,
+                       "resolution": how,
+                       "intent": ontology.classify_intent(title)},
+            ))
+    return out, {"queries": len(queries)}

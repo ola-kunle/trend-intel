@@ -26,6 +26,58 @@
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
 }
 
+/* ---------- Light theme ---------------------------------------------------
+   A calm, warm-neutral palette with sage/teal accents and high-contrast
+   text. Every colour is a variable, so the two themes stay in step.
+   ---------------------------------------------------------------------- */
+
+[data-theme="light"] {
+  --bg: #f6f5f1;
+  --bg-soft: #ffffff;
+  --panel: #ffffff;
+  --panel-2: #f0efe9;
+  --line: #dedbd2;
+  --line-soft: #ebe8e0;
+  --ink: #1b2220;
+  --ink-dim: #59615d;
+  --ink-faint: #8b938e;
+  --accent: #0d7a70;
+  --accent-2: #0b6a9c;
+  --violet: #6d28d9;
+  --amber: #a55a09;
+  --rose: #be123c;
+  --green: #15803d;
+  --shadow: 0 8px 24px rgba(30, 40, 36, .10);
+}
+
+[data-theme="light"] body {
+  background:
+    radial-gradient(1100px 560px at 10% -8%, rgba(13,122,112,.07), transparent 62%),
+    radial-gradient(900px 460px at 90% -4%, rgba(109,40,217,.05), transparent 60%),
+    var(--bg);
+}
+
+[data-theme="light"] .masthead { background: rgba(255,255,255,.90); }
+[data-theme="light"] .tabs-wrap { background: rgba(246,245,241,.94); }
+[data-theme="light"] .filters { background: rgba(246,245,241,.92); }
+[data-theme="light"] .brand .mark { text-shadow: 0 0 18px rgba(13,122,112,.28); }
+[data-theme="light"] .bar i { background: linear-gradient(90deg, var(--accent-2), var(--accent)); }
+[data-theme="light"] .spark path.line { stroke: var(--accent); }
+[data-theme="light"] .spark path.area { fill: rgba(13,122,112,.14); }
+[data-theme="light"] .badge.lifecycle,
+[data-theme="light"] .badge.lifecycle.emerging,
+[data-theme="light"] .badge.lifecycle.accelerating,
+[data-theme="light"] .badge.conf-high,
+[data-theme="light"] .badge.conf-moderate,
+[data-theme="light"] .badge.tier-established,
+[data-theme="light"] .badge.tier-emerging,
+[data-theme="light"] .badge.tier-unsubstantiated {
+  background: transparent;
+}
+[data-theme="light"] .note { background: rgba(109,40,217,.05); }
+[data-theme="light"] .empty { background: rgba(255,255,255,.6); }
+[data-theme="light"] .drawer { box-shadow: -12px 0 40px rgba(30,40,36,.16); }
+
 * { box-sizing: border-box; }
 
 html { scroll-behavior: smooth; scroll-padding-top: 120px; }
@@ -442,4 +494,144 @@ body {
 .subgroup span {
   font-size: 11.5px; font-weight: 450; color: var(--ink-faint);
   font-family: var(--mono);
+}
+
+/* ==========================================================================
+   Source status strip — the first thing a reader sees after the caveat.
+   ========================================================================== */
+
+.source-strip {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap;
+  background: var(--panel); border: 1px solid var(--line-soft);
+  border-radius: var(--radius); padding: 10px 14px; margin: 0 0 14px;
+}
+.strip-lead { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.strip-title {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .13em;
+  color: var(--ink-faint); font-weight: 650;
+}
+.strip-count { font-size: 12px; color: var(--ink-dim); }
+.strip-count b { font-family: var(--mono); color: var(--ink); }
+.strip-count b.good { color: var(--green); }
+.strip-count b.warn { color: var(--amber); }
+.strip-time { font-size: 11.5px; color: var(--ink-faint); font-family: var(--mono); }
+.strip-dots { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
+.dot-chip {
+  display: inline-flex; align-items: center; gap: 5px; text-decoration: none;
+  font-size: 11px; color: var(--ink-dim);
+  border: 1px solid var(--line-soft); border-radius: 100px;
+  padding: 3px 9px 3px 7px; background: var(--panel-2);
+  transition: .15s;
+}
+.dot-chip:hover { border-color: var(--accent); color: var(--ink); }
+.dot-name { white-space: nowrap; }
+
+.strip-skeleton { display: flex; gap: 8px; width: 100%; }
+.strip-skeleton span {
+  height: 12px; border-radius: 6px; flex: 1;
+  background: linear-gradient(90deg, var(--panel-2), var(--line-soft), var(--panel-2));
+  background-size: 200% 100%; animation: shimmer 1.4s linear infinite;
+}
+
+/* ==========================================================================
+   Loading skeleton, error banner
+   ========================================================================== */
+
+.skeleton { display: grid; gap: 12px; margin-bottom: 18px; }
+.skeleton.hidden { display: none; }
+.sk-row {
+  height: 86px; border-radius: var(--radius);
+  border: 1px solid var(--line-soft); background: var(--panel);
+  background-image: linear-gradient(100deg, transparent 20%,
+    rgba(148,163,184,.10) 40%, transparent 60%);
+  background-size: 220% 100%;
+  animation: shimmer 1.5s linear infinite;
+}
+@keyframes shimmer { 0% { background-position: 180% 0; } 100% { background-position: -40% 0; } }
+
+.load-error {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  background: rgba(251,113,133,.10); border: 1px solid rgba(251,113,133,.35);
+  color: var(--ink); border-radius: var(--radius); padding: 13px 16px;
+  margin-bottom: 16px; font-size: 13px;
+}
+.load-error.hidden { display: none; }
+.load-error strong { color: var(--rose); }
+
+/* ==========================================================================
+   Empty states
+   ========================================================================== */
+
+.empty {
+  padding: 26px 24px; text-align: center; color: var(--ink-faint); font-size: 13px;
+  border: 1px dashed var(--line); border-radius: var(--radius);
+  background: rgba(255,255,255,.02);
+}
+.empty-icon { font-size: 22px; color: var(--ink-faint); opacity: .55; margin-bottom: 6px; }
+.empty p { margin: 0 0 4px; }
+.empty-meta { font-size: 12px; color: var(--ink-faint); }
+.empty-meta b { color: var(--ink-dim); font-family: var(--mono); font-weight: 600; }
+
+/* ==========================================================================
+   Micro-interactions
+   ========================================================================== */
+
+body[data-loaded=""] .cards > .card,
+body[data-loaded=""] .q-grid > .q,
+body[data-loaded=""] .opp-grid > .opp,
+body[data-loaded=""] .source-list > .source {
+  animation: fadeUp .34s cubic-bezier(.2,.7,.3,1) both;
+}
+body[data-loaded=""] .cards > .card:nth-child(2) { animation-delay: .03s; }
+body[data-loaded=""] .cards > .card:nth-child(3) { animation-delay: .06s; }
+body[data-loaded=""] .cards > .card:nth-child(4) { animation-delay: .09s; }
+body[data-loaded=""] .cards > .card:nth-child(5) { animation-delay: .12s; }
+body[data-loaded=""] .cards > .card:nth-child(6) { animation-delay: .15s; }
+@keyframes fadeUp { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+
+.btn-refresh.busy { opacity: .7; pointer-events: none; }
+.btn-refresh.ok { border-color: var(--green); color: var(--green); }
+.btn-icon { width: 34px; padding: 7px 0; text-align: center; font-size: 14px; }
+
+.tabs { scroll-snap-type: x proximity; }
+.tab { scroll-snap-align: start; transition: color .15s, border-color .15s; }
+.tab:hover { color: var(--accent); }
+
+/* ==========================================================================
+   Plain-English methodology disclosure
+   ========================================================================== */
+
+details.plain {
+  margin-top: 12px; border: 1px solid var(--line-soft); border-radius: var(--radius);
+  background: var(--panel); overflow: hidden;
+}
+details.plain summary {
+  cursor: pointer; padding: 11px 15px; font-size: 13px; font-weight: 600;
+  color: var(--accent-2); list-style: none; user-select: none;
+}
+details.plain summary::-webkit-details-marker { display: none; }
+details.plain summary::before { content: "▸ "; color: var(--ink-faint); }
+details.plain[open] summary::before { content: "▾ "; }
+details.plain summary:hover { color: var(--accent); }
+.plain-body {
+  padding: 0 16px 16px; font-size: 13.2px; line-height: 1.68; color: var(--ink-dim);
+}
+.plain-body strong { color: var(--ink); }
+.plain-body ul { margin: 8px 0; padding-left: 20px; }
+.plain-body li { margin: 5px 0; }
+
+/* ==========================================================================
+   Mobile navigation — scroll-snap + edge fade
+   ========================================================================== */
+
+@media (max-width: 780px) {
+  .source-strip { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .strip-dots { width: 100%; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; scrollbar-width: none; }
+  .strip-dots::-webkit-scrollbar { display: none; }
+  .dot-chip { flex: none; }
+  .tabs-wrap { position: sticky; top: 0; z-index: 45; }
+  .tabs { padding-left: 4px; padding-right: 4px; }
+  .filters { top: 44px; }
+  .load-error { flex-direction: column; align-items: flex-start; }
 }
