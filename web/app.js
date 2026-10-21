@@ -355,7 +355,7 @@
       if (s.runs) meta.push(s.runs + " runs");
       return '<div class="source"><div><div class="name"><span class="dot ' + cls + '"></span>' + esc(s.label) +
         "</div>" + (s.message ? '<div class="msg">' + esc(s.message) + "</div>" : "") + "</div>" +
-        '<div class="stat">' + (meta.join("<br>") || "—") + "</div></div>";
+        '<div class="source-stat">' + (meta.join("<br>") || "—") + "</div></div>";
     }).join("");
   }
 
