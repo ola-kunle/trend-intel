@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS observations (
     raw_text  TEXT NOT NULL,
     metric    TEXT NOT NULL,
     value     REAL,
+    cycle     INTEGER DEFAULT 0,
     url       TEXT,
     extra     TEXT
 );
@@ -42,6 +43,7 @@ CREATE INDEX IF NOT EXISTS ix_obs_concept_ts ON observations(concept, epoch);
 CREATE INDEX IF NOT EXISTS ix_obs_source_ts  ON observations(source, epoch);
 CREATE INDEX IF NOT EXISTS ix_obs_geo_ts     ON observations(geo, epoch);
 CREATE INDEX IF NOT EXISTS ix_obs_epoch      ON observations(epoch);
+CREATE INDEX IF NOT EXISTS ix_obs_cycle      ON observations(cycle);
 
 CREATE TABLE IF NOT EXISTS concepts (
     concept    TEXT PRIMARY KEY,
@@ -107,12 +109,13 @@ def insert_observations(conn, rows):
             r["ts"], r.get("epoch", now), r["source"], r.get("geo", "GLOBAL"),
             r.get("lang", "en"), r.get("surface", "search"), r.get("concept") or "",
             r.get("raw_text", ""), r.get("metric", "count"), r.get("value"),
+            int(r.get("cycle", 0) or 0),
             r.get("url"), json.dumps(r.get("extra") or {}, ensure_ascii=False),
         ))
     conn.executemany(
         "INSERT INTO observations "
-        "(ts, epoch, source, geo, lang, surface, concept, raw_text, metric, value, url, extra) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", payload)
+        "(ts, epoch, source, geo, lang, surface, concept, raw_text, metric, value, cycle, url, extra) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", payload)
     conn.commit()
     return len(payload)
 

@@ -4,5 +4,8 @@ __pycache__/
 data/observations.sqlite
 data/observations.sqlite-wal
 data/observations.sqlite-shm
+web/data/latest.json
+web/data/series.json
+web/data/validation.json
 .netlify/
 node_modules/

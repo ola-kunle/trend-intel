@@ -133,6 +133,8 @@ def classify_lifecycle(metrics, history_depth, now_epoch):
     baseline to compare against. Otherwise the concept is reported as
     ``newly_observed`` - which is an honest statement, not a hedge.
     """
+    # Without a baseline we make no momentum claim at all. This is the rule
+    # the brief insists on: no history, no early-detection claim.
     if history_depth < config.MIN_OBSERVATIONS:
         return "newly_observed"
 
@@ -140,17 +142,13 @@ def classify_lifecycle(metrics, history_depth, now_epoch):
     velocity = metrics.get("velocity", 0.0)
     sources = metrics.get("cross_source_count", 0)
     burst = metrics.get("burst_score", 0.0)
-    age_hours = metrics.get("age_hours", 999)
 
-    if age_hours <= 24:
-        return "newly_observed"
-
-    if accel > 0.05 and velocity > 0 and sources >= config.MIN_CROSS_SOURCE:
-        return "emerging"
+    if accel < -0.2:
+        return "declining"
     if accel > 0.15:
         return "accelerating"
-    if accel < -0.2 and metrics.get("recent_observation", 1) > 0:
-        return "declining"
+    if accel > 0.05 and sources >= config.MIN_CROSS_SOURCE:
+        return "emerging"
     if burst > 0.6 and accel <= 0.05:
         return "peaking"
     if metrics.get("seasonality_peak"):
@@ -202,9 +200,9 @@ def confidence_level(metrics, history_depth):
         reasons.append("baseline available")
 
     total = s_score + d_score + b_score
-    if total >= 6:
+    if total >= 7:
         level = "high"
-    elif total >= 4:
+    elif total >= 5:
         level = "moderate"
     else:
         level = "low"
@@ -215,7 +213,7 @@ def confidence_level(metrics, history_depth):
 def compute_metrics(concept, buckets, now_epoch, extra=None):
     """Compute growth metrics for one concept from its bucketed observations."""
     extra = extra or {}
-    keys = sorted(buckets)
+    keys = sorted(buckets)            # collection cycle ids, in order
     counts = [buckets[k].get("count", 0) for k in keys]
     views = [buckets[k].get("views", 0.0) for k in keys]
     sources_all = set()
@@ -224,6 +222,9 @@ def compute_metrics(concept, buckets, now_epoch, extra=None):
 
     depth = len(keys)                       # distinct time buckets observed
     raw_obs = sum(buckets[k].get("raw_count", 0) for k in keys)
+    cycles = set()
+    for k in keys:
+        cycles.update(buckets[k].get("cycles") or [])
     has_baseline = depth >= config.MIN_OBSERVATIONS
 
     velocity = 0.0
@@ -243,7 +244,7 @@ def compute_metrics(concept, buckets, now_epoch, extra=None):
                 acceleration = _safe_div(rr - pr, max(pr, 0.5))
 
     burst, burst_ev = burst_onset_score(buckets, now_epoch)
-    series = [(k, buckets[k].get("count", 0)) for k in keys]
+    series = [(buckets[k].get("epoch", k), buckets[k].get("count", 0)) for k in keys]
     damp, season_info = _seasonal_damp(concept, series, now_epoch)
 
     # Creator diversity: distinct channels observed in the recent window.
@@ -259,14 +260,15 @@ def compute_metrics(concept, buckets, now_epoch, extra=None):
                 early.add(ch)
         creator_growth = max(0.0, len(creators - early) / max(1, len(early) or 1))
 
-    first_epoch = keys[0] if keys else now_epoch
-    age_hours = (now_epoch - first_epoch) / 3600.0
+    first_epoch = buckets[keys[0]].get("epoch", now_epoch) if keys else now_epoch
+    age_hours = max(0.0, (now_epoch - first_epoch) / 3600.0)
 
     recent_obs = sum(counts[-3:]) if counts else 0
 
     metrics = {
         "observations": raw_obs,
         "time_buckets": depth,
+        "cycles_observed": len(cycles),
         "has_baseline": has_baseline,
         "age_hours": round(age_hours, 1),
         "velocity": round(velocity, 4),
@@ -282,7 +284,8 @@ def compute_metrics(concept, buckets, now_epoch, extra=None):
         "total_views": round(sum(views), 1),
         "seasonality_damp": damp,
         "seasonality": season_info,
-        "series": [{"t": k, "v": c} for k, c in series[-90:]],
+        "seasonality_peak": bool(season_info.get("reason") == "current month historically elevated"),
+        "series": [{"t": k, "v": c, "cycle": kk} for kk, (k, c) in zip(keys, series[-90:])],
     }
     return metrics
 

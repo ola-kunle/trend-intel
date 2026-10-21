@@ -171,6 +171,7 @@
     badges.push('<span class="badge conf-' + esc(conf.level) + '">confidence: ' + esc(conf.level) + "</span>");
     badges.push('<span class="badge tier-' + esc(tier) + '">' + esc(tierLabel) + "</span>");
     if (t.discovered) badges.push('<span class="badge src">newly discovered</span>');
+    if (t.first_seen_recent) badges.push('<span class="badge src">first seen &lt; 24h</span>');
 
     var srcBadges = (t.sources || []).slice(0, 6).map(function (s) {
       return '<span class="badge src">' + esc(SOURCE_SHORT[s] || s) + "</span>";
@@ -397,9 +398,28 @@
     }
 
     renderStatbar();
-    renderCards("list-emerging", pick(sec.emerging), "No topic currently meets the emerging bar. That is a real result, not a failure — it means nothing has crossed the acceleration and corroboration thresholds yet.");
+    var emergingHtml = "";
+    var emergingItems = pick(sec.emerging);
+    if (emergingItems.length) {
+      emergingHtml = emergingItems.map(card).join("");
+    } else {
+      emergingHtml = '<div class="empty">No topic currently meets the emerging bar. That is a real result, not a failure — it means nothing has crossed the acceleration and corroboration thresholds yet. History builds with every collection cycle.</div>';
+    }
+    var newlyItems = pick(sec.newly_observed).slice(0, 24);
+    if (newlyItems.length) {
+      emergingHtml += '<h3 class="subgroup">Newly observed <span>first seen inside the window · no baseline yet · no early-detection claim</span></h3>' +
+        newlyItems.map(card).join("");
+    }
+    $("#list-emerging").innerHTML = emergingHtml;
     renderCards("list-before-viral", pick(sec.before_viral), "No candidate currently clears the burst-onset and corroboration bar. This panel fills as history accumulates.");
-    renderCards("list-fastest", S.filtered.slice().sort(function (a, b) { return (b.acceleration || 0) - (a.acceleration || 0); }).slice(0, 20), "Nothing to rank yet.");
+    var hasAccel = S.filtered.some(function (t) { return t.has_baseline; });
+    if (hasAccel) {
+      renderCards("list-fastest", S.filtered.slice().sort(function (a, b) { return (b.acceleration || 0) - (a.acceleration || 0); }).slice(0, 20), "Nothing to rank yet.");
+    } else {
+      renderCards("list-fastest", S.filtered.slice().sort(function (a, b) {
+        return (b.cross_source_count - a.cross_source_count) || (b.observations - a.observations);
+      }).slice(0, 20), "Nothing to rank yet.");
+    }
     renderCards("list-cross", pick(sec.cross_platform), "No topic yet appears on two independent sources.");
     renderQuestions();
     renderPhrasings();
@@ -572,7 +592,7 @@
     return loadData(force).then(function (data) {
       S.data = data;
       populateFilters();
-      renderAll();
+      applyFilters();
       $("#footer-meta").textContent =
         "Version " + (data.version || "?") + " · " +
         (data.stats ? data.stats.observations_total + " observations stored · " : "") +

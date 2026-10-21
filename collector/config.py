@@ -61,8 +61,8 @@ REDDIT_SUBREDDITS = [
     "attachmenttheory",
 ]
 
-REDDIT_MIN_INTERVAL_SECONDS = 45.0
-REDDIT_PER_CYCLE = 3
+REDDIT_MIN_INTERVAL_SECONDS = 8.0
+REDDIT_PER_CYCLE = 2
 
 # --- YouTube ---------------------------------------------------------------
 
@@ -93,6 +93,19 @@ YOUTUBE_RESULTS_PER_QUERY = 12
 SUGGEST_MODIFIERS = ["", "for", "how to"]
 SUGGEST_SEEDS_PER_CYCLE = 30
 SUGGEST_LANG_CYCLE = ["en", "fi", "es", "en", "fi", "es"]
+
+SUGGEST_MAX_PER_SEED = 8
+
+# Sources whose text is a *topic* rather than a *headline*. Only these may
+# mint a new concept. A news headline like "Wellness Expo in Sharonville" is
+# an event, not an emerging topic, and minting it would fill the store with
+# fragments.
+MINT_ALLOWED_SOURCES = {
+    "europepmc",       # research paper titles are genuinely topic-like
+    "youtube_search",  # video titles describe a subject
+    "wikipedia_views", # article titles are canonical
+}
+
 
 # --- Source toggles --------------------------------------------------------
 #

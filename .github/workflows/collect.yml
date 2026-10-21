@@ -48,6 +48,12 @@ jobs:
           key: obs-${{ github.run_number }}
           restore-keys: obs-
 
+      - name: Collect
+        run: python -m collector.run --no-llm ${{ inputs.quick && '--quick' || '' }}
+
+      - name: Validate signals
+        run: python -m tools.validate
+
       - name: Cache observation store (save)
         if: always()
         uses: actions/cache/save@v4
@@ -55,37 +61,26 @@ jobs:
           path: data/observations.sqlite
           key: obs-${{ github.run_number }}
 
-      - name: Collect
-        run: |
-          python -m collector.run --no-llm ${{ inputs.quick && '--quick' || '' }}
-
-      - name: Validate signals
-        run: python -m tools.validate
-
+      # The dashboard reads live data from the raw file host on the `data`
+      # branch, so the site updates every cycle without a Netlify rebuild.
+      # The branch is force-pushed from a clean temp repository: no branch
+      # surgery in the working tree, and no unbounded history on `main`.
       - name: Publish data branch
         run: |
-          # The dashboard reads live data from the raw file host on this
-          # branch, so the site updates without a Netlify rebuild.
+          set -euo pipefail
+          rm -rf /tmp/databranch
+          mkdir -p /tmp/databranch/data/snapshots
+          cp -f data/latest.json data/series.json /tmp/databranch/data/ 2>/dev/null || true
+          cp -f data/validation.json /tmp/databranch/data/ 2>/dev/null || true
+          cp -f data/snapshots/*.json /tmp/databranch/data/snapshots/ 2>/dev/null || true
+          cd /tmp/databranch
+          git init -q -b data
           git config user.name  "trend-intel-bot"
           git config user.email "bot@users.noreply.github.com"
-          git checkout --orphan data
-          git rm -rf --cached . >/dev/null 2>&1 || true
-          rm -rf .github collector tools web .gitignore requirements.txt netlify.toml FEASIBILITY-REPORT.md README.md
-          mkdir -p data/snapshots
-          cp -f data/latest.json data/series.json data/validation.json data/ 2>/dev/null || true
-          cp -f data/snapshots/*.json data/snapshots/ 2>/dev/null || true
-          git add -A data
-          git commit -m "data: snapshot $(date -u +%Y-%m-%dT%H:%M:%SZ)" || echo "nothing to commit"
-          git push --force origin data
-
-      - name: Commit artefacts to main
-        run: |
-          git checkout main
-          git config user.name  "trend-intel-bot"
-          git config user.email "bot@users.noreply.github.com"
-          mkdir -p data/snapshots
-          cp -f data/latest.json data/series.json data/validation.json data/ 2>/dev/null || true
-          cp -f data/snapshots/*.json data/snapshots/ 2>/dev/null || true
-          git add -f data/latest.json data/series.json data/validation.json data/snapshots 2>/dev/null || true
-          git commit -m "data: snapshot $(date -u +%Y-%m-%dT%H:%M:%SZ)" || echo "nothing to commit"
-          git push origin main
+          git add -A
+          git commit -q -m "data: snapshot $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push --force \
+            "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" \
+            data
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

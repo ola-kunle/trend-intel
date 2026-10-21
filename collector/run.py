@@ -211,17 +211,32 @@ def build_payload(conn, health, llm_notes=None):
             continue
         by_concept.setdefault(c, []).append(o)
 
-    # Buckets per concept, with creator information preserved.
+    # How many collection cycles contributed to each wall-clock hour, across
+    # the whole corpus. Reported in the payload so the reader can see how
+    # densely the system was actually sampling.
+    bucket_cycles = {}
+    for o in obs:
+        b = int(o["epoch"] // 3600) * 3600
+        bucket_cycles.setdefault(b, set()).add(int(o.get("cycle") or 0))
+    cycles_total = len({int(o.get("cycle") or 0) for o in obs})
+
+    # Buckets per concept, keyed by COLLECTION CYCLE rather than wall-clock
+    # hour. The collector runs on a fixed schedule, so a cycle is the natural
+    # unit of time: growth measured per cycle is comparable across runs and
+    # is unaffected by a collector that was restarted or backfilled. Wall
+    # clock is still recorded on every observation for display and for the
+    # lead-time validation.
     buckets = {}
     for c, rows_c in by_concept.items():
         b = {}
         for r in rows_c:
-            slot = int(r["epoch"] // 3600) * 3600
+            slot = int(r.get("cycle") or 0)
             s = b.setdefault(slot, {"count": 0.0, "raw_count": 0, "views": 0.0,
                                     "volume": 0.0, "comments": 0.0,
                                     "sources": set(), "creators": set(),
                                     "avg_rank": None, "rank_sum": 0.0,
-                                    "rank_n": 0, "raw": 0.0})
+                                    "rank_n": 0, "raw": 0.0, "cycles": set(),
+                                    "epochs": []})
             extra = {}
             try:
                 extra = json.loads(r.get("extra") or "{}")
@@ -233,6 +248,8 @@ def build_payload(conn, health, llm_notes=None):
             # show "how many raw observations" as well as "how much evidence".
             w = concepts.evidence_weight(extra.get("resolution"), r["source"])
             s["count"] += w
+            s["cycles"].add(int(r.get("cycle") or 0))
+            s["epochs"].append(r["epoch"])
             s["raw_count"] += 1
             s["raw"] += w
             s["sources"].add(r["source"])
@@ -249,6 +266,9 @@ def build_payload(conn, health, llm_notes=None):
         for s in b.values():
             s["sources"] = sorted(s["sources"])
             s["avg_rank"] = (s["rank_sum"] / s["rank_n"]) if s["rank_n"] else None
+            s["epoch"] = sum(s["epochs"]) / len(s["epochs"]) if s["epochs"] else 0
+            s["epoch_max"] = max(s["epochs"]) if s["epochs"] else 0
+            s["cycles"] = sorted(s["cycles"])
         buckets[c] = b
 
     # Cohort for percentile normalisation.
@@ -292,10 +312,13 @@ def build_payload(conn, health, llm_notes=None):
             "related": concepts.related_for(c),
             "sources": m["sources"],
             "cross_source_count": m["cross_source_count"],
+            "cycles_observed": m.get("cycles_observed", 0),
             "surface_count": len({r.get("surface") for r in rows_c}),
             "observations": m["observations"],
             "time_buckets": m["time_buckets"],
+            "collection_cycles": m.get("cycles_observed", 0),
             "age_hours": m["age_hours"],
+            "first_seen_recent": m["age_hours"] < 24,
             "velocity": m["velocity"],
             "acceleration": m["acceleration"],
             "burst_score": m["burst_score"],
@@ -331,6 +354,11 @@ def build_payload(conn, health, llm_notes=None):
 
     # --- Section views -----------------------------------------------------
     emerging = [r for r in trend_rows if r["lifecycle"] in ("emerging", "accelerating")]
+    # Topics seen for the first time inside the window. These make no
+    # early-detection claim - they are simply the newest things we noticed.
+    newly_observed = sorted(
+        [r for r in trend_rows if r["lifecycle"] == "newly_observed"],
+        key=lambda r: (r["cross_source_count"], r["observations"]), reverse=True)
     before_viral = sorted(
         [r for r in trend_rows
          if r["lifecycle"] in ("emerging", "accelerating")
@@ -393,6 +421,19 @@ def build_payload(conn, health, llm_notes=None):
     total_concepts = conn.execute(
         "SELECT COUNT(*) c FROM concepts").fetchone()["c"]
 
+    # Slim the payload. The dashboard needs full detail (evidence links,
+    # questions, angles, series) for what it actually renders, but shipping
+    # full detail for hundreds of low-ranked concepts bloats the published
+    # snapshot for no benefit and makes the published history heavy.
+    FULL_DETAIL_TOP_N = 120
+    for i, r in enumerate(trend_rows):
+        if i < FULL_DETAIL_TOP_N:
+            continue
+        r["evidence"] = (r.get("evidence") or [])[:3]
+        r["questions"] = (r.get("questions") or [])[:2]
+        r["opportunities"] = (r.get("opportunities") or [])[:1]
+        r["series"] = (r.get("series") or [])[-12:]
+
     payload = {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
         "generated_at_local": time.strftime("%Y-%m-%d %H:%M:%S %Z"),
@@ -400,6 +441,8 @@ def build_payload(conn, health, llm_notes=None):
         "primary_geo": config.PRIMARY_GEO,
         "stats": {
             "observations_total": total_obs,
+            "collection_cycles": cycles_total,
+            "median_cycle_interval_hours": _median_cycle_interval(conn),
             "concepts_total": total_concepts,
             "concepts_active": len(trend_rows),
             "window_days": window_days,
@@ -432,16 +475,38 @@ def build_payload(conn, health, llm_notes=None):
             "before_viral": [r["key"] for r in before_viral],
             "fastest": [r["key"] for r in fastest],
             "cross_platform": [r["key"] for r in cross],
+            "newly_observed": [r["key"] for r in newly_observed],
         },
-        "questions": all_questions[:120],
+        "questions": all_questions[:90],
         "new_phrasings": store.new_phrasings(conn, within_hours=72, limit=90),
-        "opportunities": opportunities[:120],
+        "opportunities": opportunities[:90],
         "regional": regional,
         "source_health": source_health,
         "llm": {"provider": enrich.available(),
                 "enabled": bool(enrich.available())},
     }
     return payload, trend_rows, by_concept
+
+
+def _median_cycle_interval(conn):
+    """Median wall-clock hours between collection cycles.
+
+    Reported so a reader can see how densely the system was actually
+    sampling. The growth series is indexed by cycle, so it stays comparable
+    whatever this number is, but lead times expressed in hours are only
+    meaningful once the interval matches the intended schedule.
+    """
+    rows = conn.execute(
+        "SELECT cycle, MIN(epoch) e FROM observations GROUP BY cycle ORDER BY cycle"
+    ).fetchall()
+    if len(rows) < 2:
+        return None
+    gaps = [(rows[i + 1]["e"] - rows[i]["e"]) / 3600.0 for i in range(len(rows) - 1)]
+    gaps = [g for g in gaps if g >= 0]
+    if not gaps:
+        return None
+    gaps.sort()
+    return round(gaps[len(gaps) // 2], 3)
 
 
 LIFECYCLE_LABELS = {
@@ -487,7 +552,11 @@ def main():
     conn = store.connect(db_path)
     store.prune(conn)
 
+    cycle_id = int(store.get_state(conn, "cycle_id", "0") or 0) + 1
     rows, health = collect(conn, only=only, quick=args.quick)
+    for r in rows:
+        r["cycle"] = cycle_id
+    store.set_state(conn, "cycle_id", cycle_id)
 
     if rows:
         # Resolve concepts for any that are still unmapped.
