@@ -1,0 +1,10 @@
+[build]
+  publish = "web"
+  command = ""
+
+[build.processing]
+  skip_processing = false
+
+# No serverless functions on purpose: Netlify's credit model charges per
+# GB-hour of function compute, and the dashboard reads its data at runtime
+# from the raw file host instead. Nothing runs on Netlify's servers.

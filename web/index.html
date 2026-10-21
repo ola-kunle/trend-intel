@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trend Intelligence — Wellness, Hypnosis &amp; Personal Development</title>
+<meta name="description" content="Early-warning intelligence for emerging topics in wellness, hypnosis, therapy, spirituality and personal development. Statistical trend detection with full evidence traceability.">
+<meta name="robots" content="index,follow">
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>◈</text></svg>">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="wrap masthead-inner">
+    <div class="brand">
+      <span class="mark">◈</span>
+      <div>
+        <h1>Trend Intelligence</h1>
+        <p class="tagline">Emerging topics in wellness, hypnosis, therapy &amp; personal development — detected while they are still developing.</p>
+      </div>
+    </div>
+    <div class="masthead-meta">
+      <div class="meta-block">
+        <span class="meta-label">Data through</span>
+        <strong id="meta-updated">—</strong>
+      </div>
+      <div class="meta-block">
+        <span class="meta-label">Feed</span>
+        <strong id="meta-feed" class="feed-state">loading…</strong>
+      </div>
+      <button id="refresh" class="btn-refresh" title="Reload the latest snapshot">↻ Refresh</button>
+    </div>
+  </div>
+  <div class="wrap caveat">
+    <strong>Read this first.</strong> Every number below is a measurement of
+    <em>observed public data</em>, not a forecast. A topic labelled
+    <em>Newly observed</em> has no baseline yet and makes <strong>no</strong>
+    early-detection claim. Only topics with a computed baseline and two or more
+    independent sources appear in <em>Emerging</em> and <em>Before it goes viral</em>.
+  </div>
+</header>
+
+<nav class="tabs-wrap">
+  <div class="wrap tabs" id="tabs">
+    <a href="#emerging" class="tab active">Emerging Now</a>
+    <a href="#before-viral" class="tab">Before It Goes Viral</a>
+    <a href="#fastest" class="tab">Fastest Growing</a>
+    <a href="#cross" class="tab">Cross-Platform</a>
+    <a href="#questions" class="tab">Audience Questions</a>
+    <a href="#phrasings" class="tab">New Phrasings</a>
+    <a href="#opportunities" class="tab">Content Opportunities</a>
+    <a href="#lifecycle" class="tab">Trend Lifecycle</a>
+    <a href="#regional" class="tab">Regional</a>
+    <a href="#sources" class="tab">Source Health</a>
+    <a href="#method" class="tab">Methodology</a>
+  </div>
+</nav>
+
+<main class="wrap">
+
+  <section class="statbar" id="statbar"></section>
+
+  <section class="filters" id="filters">
+    <div class="filter-row">
+      <input type="search" id="f-search" placeholder="Search topics, questions, angles…" autocomplete="off">
+      <select id="f-category"><option value="">All categories</option></select>
+      <select id="f-geo"><option value="">All geographies</option></select>
+      <select id="f-source"><option value="">All sources</option></select>
+      <select id="f-lifecycle"><option value="">Any lifecycle</option></select>
+      <select id="f-confidence"><option value="">Any confidence</option></select>
+      <select id="f-tier"><option value="">Any evidence tier</option></select>
+      <select id="f-minscore">
+        <option value="0">Any score</option>
+        <option value="25">Score ≥ 25</option>
+        <option value="50">Score ≥ 50</option>
+        <option value="65">Score ≥ 65</option>
+        <option value="80">Score ≥ 80</option>
+      </select>
+      <button class="btn-clear" id="f-clear">Clear</button>
+    </div>
+    <div class="filter-summary" id="filter-summary"></div>
+  </section>
+
+  <section id="emerging" class="panel">
+    <div class="panel-head">
+      <h2>Emerging Now</h2>
+      <p>Topics with a measured upward change in their rate of change, corroborated across at least two independent sources.</p>
+    </div>
+    <div id="list-emerging" class="cards"></div>
+  </section>
+
+  <section id="before-viral" class="panel">
+    <div class="panel-head">
+      <h2>Before It Goes Viral</h2>
+      <p><strong>Probabilistic, not predictive.</strong> These are the strongest current candidates by burst onset and corroboration. There is no guarantee any of them will become mainstream, and this panel makes no accuracy claim.</p>
+    </div>
+    <div id="list-before-viral" class="cards"></div>
+  </section>
+
+  <section id="fastest" class="panel">
+    <div class="panel-head">
+      <h2>Fastest Growing</h2>
+      <p>Ranked by acceleration — the change in growth rate, which is what distinguishes "gaining" from "already popular".</p>
+    </div>
+    <div id="list-fastest" class="cards"></div>
+  </section>
+
+  <section id="cross" class="panel">
+    <div class="panel-head">
+      <h2>Cross-Platform Signals</h2>
+      <p>Topics independently appearing across two or more different data surfaces. Corroboration raises confidence; it does not create lead time.</p>
+    </div>
+    <div id="list-cross" class="cards"></div>
+  </section>
+
+  <section id="questions" class="panel">
+    <div class="panel-head">
+      <h2>Audience Questions</h2>
+      <p>Questions and problems people are actually phrasing, taken verbatim from observed content and search suggestions, with the source link attached.</p>
+    </div>
+    <div class="q-grid" id="list-questions"></div>
+  </section>
+
+  <section id="phrasings" class="panel">
+    <div class="panel-head">
+      <h2>New Search Phrasings</h2>
+      <p>Search and autocomplete phrasings observed for the <strong>first time</strong> in the last 72 hours. A phrasing that appears before there is content to answer it is one of the clearest early signals available for free.</p>
+    </div>
+    <div class="q-grid" id="list-phrasings"></div>
+  </section>
+
+  <section id="opportunities" class="panel">
+    <div class="panel-head">
+      <h2>Content Opportunities</h2>
+      <p>Suggested angles derived strictly from what was observed — never invented, and screened so they do not imply unsupported medical claims.</p>
+    </div>
+    <div class="opp-grid" id="list-opportunities"></div>
+  </section>
+
+  <section id="lifecycle" class="panel">
+    <div class="panel-head">
+      <h2>Trend Lifecycle</h2>
+      <p>Historical progression for each topic. Use this to tell an emerging topic from a seasonal one that has been around for years.</p>
+    </div>
+    <div class="table-wrap">
+      <table class="data-table" id="lifecycle-table">
+        <thead>
+          <tr>
+            <th>Topic</th><th>Lifecycle</th><th>Score</th><th>Accel.</th>
+            <th>Sources</th><th>Obs.</th><th>First seen</th><th>Confidence</th><th>Tier</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="regional" class="panel">
+    <div class="panel-head">
+      <h2>Regional Intelligence</h2>
+      <p>Where the signal is strongest by geography and language. Global English is tracked alongside Finland and Spain.</p>
+    </div>
+    <div id="regional-grid" class="geo-grid"></div>
+  </section>
+
+  <section id="sources" class="panel">
+    <div class="panel-head">
+      <h2>Source Health</h2>
+      <p>Every source, whether it is working right now, when it last ran, and — where a platform has no usable public API — exactly why.</p>
+    </div>
+    <div id="list-sources" class="source-list"></div>
+  </section>
+
+  <section id="method" class="panel">
+    <div class="panel-head">
+      <h2>Methodology</h2>
+      <p>How the numbers are produced, so you can judge them.</p>
+    </div>
+    <div id="method-body" class="method-body"></div>
+  </section>
+
+</main>
+
+<footer class="footer wrap">
+  <p>Built on free, keyless, publicly accessible data sources. No engagement data is simulated and no figure on this page is generated by a language model.</p>
+  <p id="footer-meta"></p>
+</footer>
+
+<div id="drawer" class="drawer" aria-hidden="true">
+  <div class="drawer-head">
+    <div>
+      <h3 id="drawer-title"></h3>
+      <div id="drawer-sub" class="drawer-sub"></div>
+    </div>
+    <button id="drawer-close" class="btn-close" aria-label="Close">✕</button>
+  </div>
+  <div id="drawer-body" class="drawer-body"></div>
+</div>
+<div id="scrim" class="scrim"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

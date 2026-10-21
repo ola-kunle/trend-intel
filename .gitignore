@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+data/observations.sqlite
+data/observations.sqlite-wal
+data/observations.sqlite-shm
+.netlify/
+node_modules/

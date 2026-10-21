@@ -1,0 +1,3 @@
+# The collector deliberately has almost no third-party dependencies.
+# Standard library only, except yt-dlp for YouTube search (keyless).
+yt-dlp>=2024.1.1
