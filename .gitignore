@@ -3,8 +3,7 @@ data/observations.sqlite-wal
 data/observations.sqlite-shm
 __pycache__/
 *.pyc
-web/data/latest.json
-web/data/series.json
-web/data/validation.json
+# web/data/*.json are intentionally tracked: they are the bundled fallback
+# copy the dashboard serves if the live raw-file host is unreachable.
 .netlify/
 node_modules/

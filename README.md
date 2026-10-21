@@ -70,6 +70,13 @@ redeploys hourly would burn 10,800 credits against a 300-credit monthly budget a
 the site mid-month. So the site is deployed once and reads live data at runtime from the
 raw file host — the Netlify cost is bandwidth only.
 
+**How the observation store persists.** The store exists in two places: the
+repository (a durable weekly checkpoint) and the CI cache (a fast per-run
+restore). The cache restore is written to a side path and the two copies are
+reconciled by collection-cycle count, so a stale cache can never silently roll
+the history backwards. The cache is evicted after 7 days of inactivity and is
+not a backup; the weekly commit is.
+
 **Why the growth series is indexed by collection cycle, not wall-clock hour.** A cycle is
 the natural unit of time for a scheduled collector, and indexing by cycle keeps the
 series comparable whether the collector ran twice a day or was restarted mid-window.
@@ -213,6 +220,7 @@ collector/
   store.py      SQLite observation store + durable daily aggregates
   run.py        orchestrator
 tools/validate.py   lead time, permutation test, false-positive rate
+tools/reconcile.py  picks the more advanced of the cached and stored copies
 web/                 the static dashboard (no build step)
 ```
 
