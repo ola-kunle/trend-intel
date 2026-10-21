@@ -54,6 +54,13 @@ CREATE TABLE IF NOT EXISTS concepts (
     tier       TEXT
 );
 
+CREATE TABLE IF NOT EXISTS ig_tag_budget (
+    tag           TEXT PRIMARY KEY,
+    first_queried TEXT,
+    last_queried  TEXT,
+    times_queried INTEGER DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS state (
     k TEXT PRIMARY KEY,
     v TEXT
@@ -133,6 +140,48 @@ def upsert_concepts(conn, concepts):
         "  tier=COALESCE(concepts.tier, excluded.tier)",
         [(c["concept"], c.get("first_seen"), c.get("last_seen"), c.get("category"),
           1 if c.get("is_seed") else 0, c.get("tier")) for c in concepts])
+    conn.commit()
+
+
+# --- Instagram hashtag budget ---------------------------------------------
+#
+# Meta caps Instagram hashtag search at 30 UNIQUE hashtags per rolling 7 days
+# per Business/Creator account. Re-querying a tag already inside the window
+# does not consume budget. This tracks which tags have been introduced so the
+# collector never exceeds the cap and always spends its budget on the tags
+# most likely to be relevant.
+
+IG_WINDOW_DAYS = 7
+IG_UNIQUE_LIMIT = 30
+
+
+def ig_budget_status(conn, days=IG_WINDOW_DAYS):
+    """How many new Instagram tags may still be introduced."""
+    cutoff = time.time() - days * 86400
+    rows = conn.execute(
+        "SELECT COUNT(*) n FROM ig_tag_budget WHERE first_queried >= ?",
+        (cutoff,)).fetchall()
+    used = rows[0]["n"] if rows else 0
+    return {
+        "introduced_in_window": used,
+        "unique_limit": IG_UNIQUE_LIMIT,
+        "remaining": max(0, IG_UNIQUE_LIMIT - used),
+        "window_days": days,
+    }
+
+
+def ig_known_tags(conn):
+    rows = conn.execute("SELECT tag FROM ig_tag_budget").fetchall()
+    return {r["tag"] for r in rows}
+
+
+def ig_mark_tag(conn, tag):
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    conn.execute(
+        "INSERT INTO ig_tag_budget (tag, first_queried, last_queried, times_queried) "
+        "VALUES (?,?,?,1) ON CONFLICT(tag) DO UPDATE SET "
+        "last_queried=excluded.last_queried, times_queried=ig_tag_budget.times_queried+1",
+        (tag, now, now))
     conn.commit()
 
 

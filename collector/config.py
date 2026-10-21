@@ -141,6 +141,13 @@ SOURCES = {
     "youtube_data_api": True,
 }
 
+# --- Instagram hashtag budget ----------------------------------------------
+#
+# Meta caps Instagram hashtag search at 30 unique hashtags per rolling 7 days
+# per Business/Creator account. Re-querying a known tag is free.
+IG_UNIQUE_LIMIT = 30
+IG_WINDOW_DAYS = 7
+
 # --- New-source rotation budgets ------------------------------------------
 
 # PubMed year-over-year counts are the most expensive new source (one

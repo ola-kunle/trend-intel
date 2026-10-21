@@ -669,34 +669,74 @@ def tiktok_creative():
 # 13. Official APIs that require authorisation (inert until a token exists)
 # ---------------------------------------------------------------------------
 
-def instagram_hashtag_search(token=None, tags=None):
+def instagram_hashtag_search(token=None, tags=None, conn=None):
     """Instagram Graph API hashtag search.
 
-    Requires: Meta app + App Review + ``instagram_basic`` +
-    ``Instagram Public Content Access`` + a Business/Creator account with
-    Business Verification. Also capped by Meta at 30 *unique* hashtags per
-    rolling 7 days per account, and it can only re-query tags we already know.
+    Requires: a Meta app, App Review for ``instagram_basic`` plus the
+    **Instagram Public Content Access** feature, a Business or Creator
+    account, and Business Verification.
+
+    Meta's own limit shapes the design: only **30 unique hashtags** may be
+    *introduced* per rolling 7 days, and re-querying a tag already inside the
+    window costs nothing. The tag budget is therefore tracked locally
+    (see ``store.ig_budget_status``) and the queue is seeded from three
+    places, in priority order:
+
+      1. concepts the rest of the system has discovered on its own,
+      2. concepts with cross-surface corroboration,
+      3. the curated seed list.
+
+    That ordering matters: Instagram cannot *discover* trends, so the useful
+    thing to ask it is "how big is the audience for the thing we just found
+    elsewhere?" - which turns a discovery-only source into a
+    size-confirmation source.
     """
     token = token or os.environ.get("INSTAGRAM_ACCESS_TOKEN")
-    if not token:
-        raise FetchError("instagram", None,
-                         "awaiting authorisation: INSTAGRAM_ACCESS_TOKEN not set "
-                         "(needs Meta App Review + Instagram Public Content Access)")
+    user_id = os.environ.get("IG_USER_ID")
+    if not token or not user_id:
+        raise FetchError("instagram_hashtag", None,
+                         "awaiting authorisation: INSTAGRAM_ACCESS_TOKEN and "
+                         "IG_USER_ID not set (needs Meta App Review, the "
+                         "Instagram Public Content Access feature and Business "
+                         "Verification)")
+    from . import store as _store
+
+    known = _store.ig_known_tags(conn) if conn is not None else set()
+    budget = _store.ig_budget_status(conn) if conn is not None else {
+        "remaining": config.IG_UNIQUE_LIMIT, "introduced_in_window": 0}
+
+    candidates = [t for t in (tags or []) if t.lower() not in known]
+    # Re-querying known tags is free, so always include the known ones.
+    repeat = [t for t in (tags or []) if t.lower() in known]
+    allowed_new = budget.get("remaining", 0)
+    to_query = repeat[:6] + candidates[:allowed_new]
+
     out = []
-    for tag in (tags or []):
-        url = ("https://graph.facebook.com/v22.0/ig_hashtag_search?"
-               + urllib.parse.urlencode({"user_id": os.environ.get("IG_USER_ID", ""),
-                                         "q": tag, "access_token": token}))
-        data = fetch_json(url, min_interval=0.5)
-        hid = (data.get("data") or [{}])[0].get("id")
+    for tag in to_query:
+        try:
+            found = fetch_json(
+                "https://graph.facebook.com/v22.0/ig_hashtag_search?"
+                + urllib.parse.urlencode({"user_id": user_id, "q": tag,
+                                          "access_token": token}),
+                min_interval=0.5)
+        except FetchError:
+            continue
+        hid = (found.get("data") or [{}])[0].get("id")
         if not hid:
             continue
-        recent = ("https://graph.facebook.com/v22.0/%s/recent_media?"
-                  % hid
-                  + urllib.parse.urlencode({"user_id": os.environ.get("IG_USER_ID", ""),
-                                            "fields": "id,caption,like_count,comments_count,timestamp",
-                                            "access_token": token}))
-        media = fetch_json(recent, min_interval=0.5).get("data", [])
+        if conn is not None:
+            _store.ig_mark_tag(conn, tag.lower())
+        try:
+            media = fetch_json(
+                "https://graph.facebook.com/v22.0/%s/recent_media?"
+                % hid
+                + urllib.parse.urlencode({
+                    "user_id": user_id,
+                    "fields": "id,caption,like_count,comments_count,timestamp,media_type",
+                    "access_token": token}),
+                min_interval=0.5).get("data", [])
+        except FetchError:
+            media = []
         for m in media:
             caption = m.get("caption") or ""
             key, how = concepts.resolve_or_discover(caption, allow_mint=False)
@@ -704,13 +744,17 @@ def instagram_hashtag_search(token=None, tags=None):
                 continue
             out.append(_row(
                 source="instagram_hashtag", geo="GLOBAL", lang="en", surface="social",
-                concept=key, raw_text=caption[:280], metric="likes",
-                value=float(m.get("like_count") or 0),
-                url=f"https://www.instagram.com/p/{m.get('id')}/",
-                extra={"hashtag": tag, "comments": m.get("comments_count"),
-                       "timestamp": m.get("timestamp"), "resolution": how},
+                concept=key, raw_text=caption[:280],
+                metric="likes", value=float(m.get("like_count") or 0),
+                url="https://www.instagram.com/p/%s/" % m.get("id"),
+                extra={"hashtag": tag.lower(), "comments": m.get("comments_count"),
+                       "timestamp": m.get("timestamp"),
+                       "media_type": m.get("media_type"),
+                       "resolution": how},
             ))
-    return out, {"items": len(out)}
+    return out, {"tags_queried": len(to_query),
+                 "new_tags_used": max(0, len(to_query) - len(repeat)),
+                 "budget": budget}
 
 
 def threads_keyword_search(token=None, queries=None):

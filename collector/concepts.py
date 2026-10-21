@@ -114,6 +114,43 @@ def resolve(text, *, min_overlap=0.75):
     return None, None
 
 
+# Platform hashtags are space-stripped by definition: TikTok's
+# "#nervoussystemregulation" is the phrase "nervous system regulation". The
+# ontology is written in spaced form, so a second index maps the stripped
+# form back to the concept.
+_STRIPPED_INDEX = {}
+for _seed in ontology.ALL_SEEDS:
+    _STRIPPED_INDEX.setdefault(_seed.replace(" ", ""), _seed)
+for _alias, _target in ontology.ALIASES.items():
+    _STRIPPED_INDEX.setdefault(_alias.replace(" ", ""), _target)
+
+
+def resolve_tag(tag):
+    """Resolve a platform hashtag to a concept.
+
+    Handles the space-stripped form natively, and falls back to a prefix
+    match so that "#burnoutrecovery" still lands on "burnout recovery"
+    rather than being discarded.
+    """
+    if not tag:
+        return None, None
+    key, how = resolve(tag)
+    if key:
+        return key, how
+    stripped = tag.replace(" ", "").replace("-", "").replace("_", "")
+    if stripped in _STRIPPED_INDEX:
+        return _STRIPPED_INDEX[stripped], "stripped"
+    # longest stripped seed that the tag starts with
+    best = None
+    for sform, target in _STRIPPED_INDEX.items():
+        if len(sform) >= 4 and stripped.startswith(sform):
+            if best is None or len(sform) > len(best[0]):
+                best = (sform, target)
+    if best:
+        return best[1], "prefix"
+    return None, None
+
+
 def resolve_or_discover(text, *, min_overlap=0.75, allow_mint=True):
     """Resolve, or mint a stable key for an unseen concept.
 

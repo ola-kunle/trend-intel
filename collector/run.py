@@ -57,6 +57,53 @@ def _rotate(items, cursor, take):
     return out, (cursor + take) % len(items)
 
 
+def ig_tag_queue(conn, limit=24):
+    """Priority order for Instagram hashtag queries.
+
+    Instagram cannot discover trends, so the most valuable thing to ask it is
+    how big the audience is for topics the *other* sources have just found.
+    The queue is therefore discovery-first, then corroborated topics, then the
+    curated seed list.
+    """
+    from . import manual_captures
+    priority = []
+
+    # 1. topics a human captured from TikTok / Instagram itself
+    for e in manual_captures.all_captures(conn):
+        for t in (e.get("tags") or []):
+            if t.lower() not in [p.lower() for p in priority]:
+                priority.append(t)
+
+    # 2. topics the system discovered on its own
+    rows = conn.execute(
+        "SELECT concept, COUNT(DISTINCT source) n FROM observations "
+        "WHERE concept LIKE 'auto:%' GROUP BY concept ORDER BY n DESC LIMIT 12"
+    ).fetchall()
+    for r in rows:
+        priority.append(r["concept"][5:].replace("-", " "))
+
+    # 3. topics with cross-surface corroboration
+    rows = conn.execute(
+        "SELECT concept, COUNT(DISTINCT source) n FROM observations "
+        "WHERE concept NOT LIKE 'auto:%' GROUP BY concept HAVING n >= 2 "
+        "ORDER BY n DESC LIMIT 10"
+    ).fetchall()
+    for r in rows:
+        priority.append(r["concept"])
+
+    # 4. curated seeds
+    priority.extend(ontology.ALL_SEEDS)
+
+    seen, out = set(), []
+    for t in priority:
+        k = t.lower().strip()
+        if not k or k in seen:
+            continue
+        seen.add(k)
+        out.append(k)
+    return out[:limit]
+
+
 def _shortlist(seeds, cursor, take):
     """Pick seeds whose *recent activity* justifies a deeper probe.
 
@@ -201,6 +248,25 @@ def collect(conn, only=None, quick=False, cycle_id=0):
     # themselves as awaiting authorisation rather than silently disappearing.
     run("brave_search", sources.brave_search, None, [], "US")
     run("youtube_data_api", sources.youtube_data_api, None, [], "US")
+    run("threads_search", sources.threads_keyword_search, None, ig_tags[:12])
+    run("pinterest_trends", sources.pinterest_trends, None, ("US", "ES", "SE+DK+FI+NO"))
+
+    # Instagram: the queue is seeded by what the other sources discovered, and
+    # Meta's 30-unique-tags-per-7-days budget is tracked locally.
+    ig_tags = ig_tag_queue(conn, limit=24) if (only is None or "instagram_hashtag" in only) else []
+    run("instagram_hashtag", sources.instagram_hashtag_search, None, ig_tags, conn)
+
+    # --- Human captures from TikTok / Instagram -----------------------------
+    try:
+        from . import manual_captures
+        cap_rows = manual_captures.capture_observations(conn)
+        if cap_rows:
+            rows.extend(cap_rows)
+            log(f"  manual_captures: {len(cap_rows)} captured tags ingested")
+        else:
+            log("  manual_captures: none captured yet")
+    except Exception as exc:
+        log(f"  manual_captures: failed -> {exc}")
 
     # --- Reddit (last: it is heavily rate limited and must not starve the
     #     other sources of the time budget) ---------------------------------
@@ -506,6 +572,7 @@ def build_payload(conn, health, llm_notes=None):
         "opportunities": opportunities[:90],
         "regional": regional,
         "source_health": source_health,
+        "captures": _capture_summary(),
         "llm": {"provider": enrich.available(),
                 "enabled": bool(enrich.available())},
     }
@@ -531,6 +598,14 @@ def _median_cycle_interval(conn):
         return None
     gaps.sort()
     return round(gaps[len(gaps) // 2], 3)
+
+
+def _capture_summary():
+    try:
+        from . import manual_captures
+        return manual_captures.capture_summary()
+    except Exception:
+        return []
 
 
 LIFECYCLE_LABELS = {

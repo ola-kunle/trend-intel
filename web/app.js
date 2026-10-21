@@ -509,6 +509,57 @@
       });
   }
 
+  function renderCaptures() {
+    var el = $("#capture-list");
+    if (!el) return;
+    var caps = (S.data && S.data.captures) || [];
+    if (!caps.length) {
+      el.innerHTML = '<div class="empty" style="text-align:left"><div class="empty-icon">\u25cb</div>' +
+        '<p>No manual captures yet.</p>' +
+        '<p class="empty-meta">Paste a trending list on the left, or run <b>python -m collector.capture</b> locally. ' +
+        "Captured topics are timestamped, tracked from that moment, and gain a baseline once the collector has seen them four times." +
+        "</p></div>";
+      return;
+    }
+    el.innerHTML = caps.map(function (c) {
+      return '<div class="cap">' +
+        '<div class="cap-head"><b>' + esc((SOURCE_SHORT[c.source + "_manual"] || c.source)) + "</b>" +
+        "<span>" + esc(c.region || "") + "</span>" +
+        "<span>" + esc(ago(c.captured_at)) + "</span></div>" +
+        '<div class="cap-tags">' + (c.tags || []).map(function (t) {
+          return '<span class="cap-tag">#' + esc(t) + "</span>";
+        }).join("") + "</div>" +
+        (c.notes ? '<div class="cap-note">' + esc(c.notes) + "</div>" : "") +
+        "</div>";
+    }).join("");
+  }
+
+  function renderPlatforms() {
+    var el = $("#platform-body");
+    if (!el) return;
+    var ig = (S.data && S.data.source_health || []).filter(function (s) { return s.source === "instagram_hashtag"; })[0];
+    var tt = (S.data && S.data.source_health || []).filter(function (s) { return s.source === "tiktok_creative"; })[0];
+    el.innerHTML =
+      "<h4>TikTok — no automated public trend data exists</h4>" +
+      "<p>Verified against the live platform on 21 October 2026, from both a datacentre IP and a residential one, in a real browser:</p>" +
+      "<ul>" +
+      "<li><code>creative_radar_api/v1/popular_trend/hashtag/list</code> returns <code>40101 no permission</code>.</li>" +
+      "<li><code>cc_portal_api/api/trendsTcc</code> — the endpoint the Creative Center page itself calls — returns <b>HTTP 500</b> for anonymous clients.</li>" +
+      "<li>The three hashtags that visibly render are identical across fresh sessions with zero table rows: they ship inside the frontend bundle and are not live data.</li>" +
+      "<li><code>tiktok.com/csi</code> (Creator Search Insights, the rising-search surface) now <b>302s to a 404</b>.</li>" +
+      "<li>TikTok's own terms prohibit automated and commercial screen scraping.</li>" +
+      "</ul>" +
+      "<p><strong>What is available:</strong> the Research API (academic and non-profit only, requires ethical review and independence from commercial interests), the Commercial Content API (advertising data, by application), and <b>the capture panel on this page</b> — you look at Creative Center in your own logged-in session, paste the list, and the system does the part a human cannot: timestamps it and tracks it over time.</p>" +
+      "<p>Current status: <b>" + (tt && tt.ok ? "responding" : (tt ? "blocked &mdash; " + esc(tt.message || "") : "unknown")) + "</b></p>" +
+      "<h4>Instagram — officially possible, and the adapter is built</h4>" +
+      "<p>Instagram <i>can</i> be read, but only through Meta's official Graph API, and only for a fixed set of tags you already know. The constraint that matters is Meta's own: <b>30 unique hashtags per rolling 7 days</b> per Business or Creator account. Re-querying a tag already inside that window costs nothing, so the collector tracks the budget locally and spends it deliberately.</p>" +
+      "<p>To switch it on you need a Meta app with <code>instagram_basic</code>, the <b>Instagram Public Content Access</b> feature, App Review, a Business or Creator account and Business Verification. That is weeks of paperwork, so the adapter sits inert and says so rather than failing quietly.</p>" +
+      "<p>The tag queue is seeded <b>discovery-first</b>: topics the other sources have just found, then corroborated topics, then the curated seed list. That matters because Instagram cannot discover trends — the useful question to ask it is <i>how big is the audience for the thing we found elsewhere?</i></p>" +
+      "<p>Current status: <b>" + (ig && ig.ok ? "connected" : (ig ? "awaiting authorisation &mdash; " + esc(ig.message || "") : "unknown")) + "</b></p>" +
+      "<h4>What this means for the numbers you are reading</h4>" +
+      "<p>Every topic on this site is discovered from the free public surfaces listed under Methodology, or captured by a human from a platform that does not expose an API. Nothing here is inferred from engagement figures TikTok or Instagram have not published, and no topic claims Instagram or TikTok reach unless a capture says so.</p>";
+  }
+
   function renderMethod() {
     var m = S.data.methodology || {};
     var w = m.weights || {};
@@ -616,6 +667,8 @@
       }).slice(0, 20), "Nothing to rank yet.");
     }
     renderCards("list-cross", pick(sec.cross_platform), "No topic yet appears on two independent sources.");
+    renderCaptures();
+    renderPlatforms();
     renderQuestions();
     renderPhrasings();
     renderOpportunities();
@@ -717,7 +770,10 @@
     tiktok_creative: "TikTok",
     instagram_hashtag: "Instagram",
     threads_search: "Threads",
-    pinterest_trends: "Pinterest"
+    pinterest_trends: "Pinterest",
+    tiktok_manual: "TikTok (captured)",
+    instagram_manual: "Instagram (captured)",
+    other_manual: "Manual capture"
   };
 
   function populateFilters() {
@@ -800,6 +856,26 @@
         }, 2600);
       });
     });
+    var cf = $("#capture-form");
+    if (cf) {
+      cf.addEventListener("submit", function (ev) {
+        ev.preventDefault();
+        var status = $("#capture-status");
+        var body = new URLSearchParams(new FormData(cf));
+        body.set("form-name", "captures");
+        status.textContent = "Saving…";
+        fetch("/", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: body.toString() })
+          .then(function (r) {
+            if (!r.ok) throw new Error("HTTP " + r.status);
+            status.textContent = "Capture saved. It will appear in the next collection cycle.";
+            cf.reset();
+          })
+          .catch(function (e) {
+            status.textContent = "Could not save: " + e.message +
+              " — use \"python -m collector.capture\" on your machine instead.";
+          });
+      });
+    }
     $("#theme-toggle").addEventListener("click", function () {
       var cur = document.documentElement.getAttribute("data-theme") || "dark";
       applyTheme(cur === "light" ? "dark" : "light");

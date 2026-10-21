@@ -68,6 +68,8 @@
     <a href="#opportunities" class="tab">Content Opportunities</a>
     <a href="#lifecycle" class="tab">Trend Lifecycle</a>
     <a href="#regional" class="tab">Regional</a>
+    <a href="#capture" class="tab">Capture</a>
+    <a href="#platforms" class="tab">Platform Access</a>
     <a href="#sources" class="tab">Source Health</a>
     <a href="#validation" class="tab">Validation</a>
     <a href="#method" class="tab">Methodology</a>
@@ -189,6 +191,52 @@
       <p>Where the signal is strongest by geography and language. Global English is tracked alongside Finland and Spain.</p>
     </div>
     <div id="regional-grid" class="geo-grid"></div>
+  </section>
+
+  <section id="capture" class="panel">
+    <div class="panel-head">
+      <h2>Capture a Platform Trend List</h2>
+      <p>TikTok and Instagram do not give automated collectors their trend data, and their terms prohibit scraping it. The legitimate route is for you to look at the page you are already logged in to, and paste the list here. The system timestamps it and starts tracking the topic from that moment — so a TikTok-originating topic gets the same baseline, acceleration and cross-source corroboration as everything else.</p>
+    </div>
+
+    <div class="capture-grid">
+      <form class="capture-form" name="captures" method="POST" data-netlify="true" netlify-honeypot="bot-field" id="capture-form">
+        <input type="hidden" name="form-name" value="captures">
+        <p class="honeypot"><label>Do not fill this out: <input name="bot-field"></label></p>
+        <label for="cap-source">Platform</label>
+        <select id="cap-source" name="source">
+          <option value="tiktok">TikTok Creative Center</option>
+          <option value="instagram">Instagram</option>
+          <option value="pinterest">Pinterest Trends</option>
+          <option value="other">Other</option>
+        </select>
+        <label for="cap-region">Region</label>
+        <select id="cap-region" name="region">
+          <option value="GLOBAL">Global</option><option value="US">United States</option>
+          <option value="FI">Finland</option><option value="ES">Spain</option>
+          <option value="GB">United Kingdom</option><option value="DE">Germany</option>
+        </select>
+        <label for="cap-tags">Trending hashtags / terms</label>
+        <textarea id="cap-tags" name="hashtags" rows="9" required placeholder="#nervoussystemregulation&#10;#somaticrelease&#10;#burnoutrecovery"></textarea>
+        <label for="cap-notes">Note (optional)</label>
+        <input id="cap-notes" name="notes" type="text" placeholder="Weekly check, Creative Center, 24h window">
+        <button type="submit" class="btn-capture">Save capture</button>
+        <p class="capture-hint" id="capture-status">Captures are stored on Netlify Forms and picked up by the next collection cycle. For a fully offline path, run <code>python -m collector.capture</code> on your machine instead.</p>
+      </form>
+
+      <div class="capture-side">
+        <h4>Recent captures</h4>
+        <div id="capture-list" class="capture-list"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="platforms" class="panel">
+    <div class="panel-head">
+      <h2>Platform Access</h2>
+      <p>Exactly what is reachable on TikTok and Instagram, what is not, and what it would take to unlock the rest. Nothing here is hidden behind a generic error message.</p>
+    </div>
+    <div id="platform-body" class="method-body"></div>
   </section>
 
   <section id="sources" class="panel">
