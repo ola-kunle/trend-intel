@@ -63,6 +63,8 @@
     <a href="#before-viral" class="tab">Before It Goes Viral</a>
     <a href="#fastest" class="tab">Fastest Growing</a>
     <a href="#cross" class="tab">Cross-Platform</a>
+    <a href="#baseline" class="tab">Manual Baseline</a>
+    <a href="#established" class="tab">Established</a>
     <a href="#questions" class="tab">Audience Questions</a>
     <a href="#phrasings" class="tab">New Phrasings</a>
     <a href="#opportunities" class="tab">Content Opportunities</a>
@@ -96,7 +98,8 @@
       <select id="f-category"><option value="">All categories</option></select>
       <select id="f-geo"><option value="">All geographies</option></select>
       <select id="f-source"><option value="">All sources</option></select>
-      <select id="f-lifecycle"><option value="">Any lifecycle</option></select>
+      <select id="f-lifecycle"><option value="">Any maturity</option></select>
+      <select id="f-family"><option value="">Any evidence type</option></select>
       <select id="f-confidence"><option value="">Any confidence</option></select>
       <select id="f-tier"><option value="">Any evidence tier</option></select>
       <select id="f-minscore">
@@ -114,7 +117,7 @@
   <section id="emerging" class="panel">
     <div class="panel-head">
       <h2>Emerging Now</h2>
-      <p>Topics with a measured upward change in their rate of change, corroborated across at least two independent sources.</p>
+      <p>Topics whose <em>rate of change is itself increasing</em>, confirmed by at least two independent lines of evidence, and not merely large. Large established topics are separated out into <a href="#established" style="color:var(--accent)">Established &amp; Mature</a> — a topic can be popular and still be flat.</p>
     </div>
     <div id="list-emerging" class="cards"></div>
   </section>
@@ -141,6 +144,22 @@
       <p>Topics independently appearing across two or more different data surfaces. Corroboration raises confidence; it does not create lead time.</p>
     </div>
     <div id="list-cross" class="cards"></div>
+  </section>
+
+  <section id="established" class="panel">
+    <div class="panel-head">
+      <h2>Established &amp; Mature</h2>
+      <p>These are the big, well-known topics — and they are here <em>precisely so you can see them excluded</em> from the emerging list. A large topic with a flat rate of change is already established, and the system says so rather than ranking it as a discovery.</p>
+    </div>
+    <div id="list-established" class="cards"></div>
+  </section>
+
+  <section id="baseline" class="panel">
+    <div class="panel-head">
+      <h2>Manual Baseline</h2>
+      <p>What a person browsing by hand would see <em>right now</em> — Reddit's own rising and top rankings, captured continuously instead of occasionally, plus Google's trending list. Compare it against <a href="#emerging" style="color:var(--accent)">Emerging Now</a>: a topic that appears here before it reaches the manual surface is the system earning its keep.</p>
+    </div>
+    <div id="list-baseline" class="baseline-grid"></div>
   </section>
 
   <section id="questions" class="panel">

@@ -882,7 +882,7 @@ def lexicon_match(text):
     return m.group(0) if m else None
 
 
-def mint_concept_label(text, max_words=5):
+def mint_concept_label(text, max_words=3):
     """Build a stable, readable label for an auto-discovered concept.
 
     We take the window of words around the matched lexicon term rather than

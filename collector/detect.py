@@ -25,6 +25,7 @@ import statistics
 import time
 
 from . import config, concepts, ontology
+from .families import families_for
 
 
 def _safe_div(a, b, default=0.0):
@@ -143,9 +144,9 @@ def classify_lifecycle(metrics, history_depth, now_epoch):
     sources = metrics.get("cross_source_count", 0)
     burst = metrics.get("burst_score", 0.0)
 
-    if accel < -0.2:
+    if accel < -0.05:
         return "declining"
-    if accel > 0.15:
+    if accel > 0.12:
         return "accelerating"
     if accel > 0.05 and sources >= config.MIN_CROSS_SOURCE:
         return "emerging"
@@ -163,22 +164,24 @@ def confidence_level(metrics, history_depth):
     observations back it, and whether we have a baseline to compute growth
     against. Surfaced as low / moderate / high with the reason attached.
     """
-    sources = metrics.get("cross_source_count", 0)
+    families = metrics.get("family_count", 0)
     depth = history_depth
     reasons = []
 
-    if sources >= 3:
+    if families >= 3:
         s_score = 3
-        reasons.append(f"{sources} independent surfaces")
-    elif sources == 2:
+        reasons.append("%d independent lines of evidence (%s)"
+                       % (families, ", ".join(metrics.get("families") or [])))
+    elif families == 2:
         s_score = 2
-        reasons.append("2 independent surfaces")
-    elif sources == 1:
+        reasons.append("2 independent lines of evidence (%s)"
+                       % ", ".join(metrics.get("families") or []))
+    elif families == 1:
         s_score = 1
-        reasons.append("1 surface only")
+        reasons.append("1 line of evidence only")
     else:
         s_score = 0
-        reasons.append("no cross-surface corroboration")
+        reasons.append("no independent corroboration")
 
     obs = metrics.get("observations", 0)
     buckets = metrics.get("time_buckets", 0)
@@ -210,15 +213,208 @@ def confidence_level(metrics, history_depth):
     return {"level": level, "score": total, "reasons": reasons}
 
 
+
+
+# ---------------------------------------------------------------------------
+# Maturity: separating a genuinely emerging topic from an established one
+# ---------------------------------------------------------------------------
+#
+# The failure mode this exists to prevent: a large, flat, well-known topic
+# ("meditation", "burnout", "anxiety") accumulating the highest score purely
+# because it has the most observations. That is not early detection, it is a
+# popularity ranking, and it is exactly what the brief said not to build.
+#
+# Maturity is a *fact about the concept's own history*, not a score.
+
+MATURITY_LABELS = {
+    "new": "Newly observed",
+    "emerging": "Emerging",
+    "accelerating": "Accelerating",
+    "established": "Established",
+    "mature": "Mature",
+    "fading": "Fading",
+    "recurring": "Recurring / seasonal",
+    "steady": "Steady",
+}
+
+
+def classify_maturity(metrics, volume_pct, now_epoch):
+    """Label how developed a concept is, from its own history."""
+    depth = metrics.get("time_buckets", 0)
+    if depth < config.MIN_OBSERVATIONS:
+        return "new"
+
+    accel = metrics.get("acceleration", 0.0)
+    vel = metrics.get("velocity", 0.0)
+    families = metrics.get("family_count", 0)
+    phrase_rate = metrics.get("phrase_novelty_rate", 0.0)
+    burst = metrics.get("burst_score", 0.0)
+
+    if metrics.get("seasonality_peak"):
+        return "recurring"
+    if accel < -0.2:
+        return "fading"
+
+    # Established: a large topic whose rate of change is flat. Big and calm
+    # is the definition of already-established.
+    if volume_pct >= 0.65 and accel < 0.03 and phrase_rate < 0.10:
+        return "established"
+
+    # Emerging: a real change in the rate of change, seen by at least two
+    # independent lines of evidence, and preferably accompanied by new
+    # search phrasings (the strongest early marker there is).
+    if accel > 0.05 and families >= 2:
+        return "emerging"
+    if accel > 0.12 and families >= 1:
+        return "accelerating"
+    if accel > 0.02 and phrase_rate > 0.12 and families >= 2:
+        return "emerging"
+    if volume_pct >= 0.65:
+        return "mature"
+    return "steady"
+
+
+# ---------------------------------------------------------------------------
+# Emergence score
+# ---------------------------------------------------------------------------
+#
+# Deliberately *not* the same thing as the old momentum score. Momentum
+# rewarded volume, which is a popularity measure. The emergence score rewards
+# novelty and change, and is computed as a percentile against the current
+# cohort, so it always answers "how unusual is this relative to what we are
+# watching right now".
+#
+# The component that matters most is `phrase_novelty`: a search phrasing that
+# has never been seen before, for a topic, is demand forming before there is
+# content to serve it. That is the earliest observable marker of an emerging
+# interest that exists without a paid API.
+
+EMERGENCE_WEIGHTS = {
+    "phrase_novelty": 0.20,
+    "acceleration": 0.20,
+    "burst_onset": 0.16,
+    "discovery_novelty": 0.14,
+    "family_confirmation": 0.14,
+    "recency": 0.08,
+    "velocity": 0.05,
+    "relevance": 0.03,
+}
+
+
+def emergence_score(metrics, cohort):
+    """0-100 emergence score.
+
+    The previous design summed percentile ranks across components, which had
+    a serious flaw: a topic that was merely unremarkable on *every* axis
+    still scored around 50, because being above the median on eight
+    separate measures adds up. Large established topics are above the median
+    on most measures, so they kept winning.
+
+    This version fixes three things:
+
+    * **Magnitude matters.** Each growth measure is scaled by an absolute
+      reference, not only by its rank. A concept whose relative share grew
+      by 2% is not emerging no matter where it sits in the cohort.
+    * **Growth and confirmation multiply, they do not add.** A topic with
+      ten sources and no growth is not emerging; a topic with real growth
+      and one source is unconfirmed. Only the product can express that.
+    * **Newly discovered vocabulary gets a small bonus**, never a
+      disqualifying penalty - an unfamiliar term is earlier news, but it
+      still has to be corroborated.
+    """
+    def clamp(x):
+        return max(0.0, min(1.0, x))
+
+    # --- growth, on an absolute scale ------------------------------------
+    accel = metrics.get("acceleration", 0.0)
+    accel_strength = clamp(accel / 0.08)
+    phrase_rate = metrics.get("phrase_novelty_rate", 0.0)
+    phrase_strength = clamp(phrase_rate / 0.18)
+    growth = 0.65 * accel_strength + 0.35 * phrase_strength
+
+    # --- confirmation ------------------------------------------------------
+    families = metrics.get("family_count", 0)
+    family_factor = clamp(families / 4.0)
+    burst_pct = (cohort.get("burst_onset") or [])
+    burst_strength = 0.0
+    if burst_pct:
+        burst_strength = _rank_pct(burst_pct, metrics.get("burst_score", 0.0))
+    recency = metrics.get("recency", 0.0)
+    confirm = 0.55 * family_factor + 0.25 * burst_strength + 0.20 * recency
+
+    score = 100.0 * growth * (0.25 + 0.75 * confirm)
+    # A concept the system discovered by itself is earlier news than one we
+    # were already watching, so it gets a bounded bonus.
+    score *= (1.0 + 0.15 * metrics.get("discovery_novelty", 0.0))
+
+    parts = {
+        "acceleration": round(accel_strength, 4),
+        "phrase_novelty": round(phrase_strength, 4),
+        "growth": round(growth, 4),
+        "family_confirmation": round(family_factor, 4),
+        "burst_onset": round(burst_strength, 4),
+        "recency": round(recency, 4),
+        "confirmation": round(confirm, 4),
+        "discovery_bonus": round(metrics.get("discovery_novelty", 0.0), 4),
+    }
+    return round(min(100.0, max(0.0, score)), 1), parts
+
+
+def maturity_label(maturity):
+    return MATURITY_LABELS.get(maturity, maturity)
+
+
+def why_it_matters(t):
+    """A factual, non-speculative explanation of what the data shows.
+
+    Every clause is derived from a measurement. Nothing here asserts that a
+    topic will grow, and nothing invents a cause.
+    """
+    parts = []
+    m = t.get("maturity")
+    if m == "established":
+        parts.append("Large and flat: this is an established topic, not an emerging one")
+    elif m == "emerging":
+        parts.append("Gaining momentum: its rate of change is increasing against its own baseline")
+    elif m == "accelerating":
+        parts.append("Accelerating: the acceleration itself is rising")
+    elif m == "new":
+        parts.append("Too new to have a baseline yet, so no momentum claim is made")
+    elif m == "fading":
+        parts.append("Losing momentum against its own baseline")
+    elif m == "recurring":
+        parts.append("Seasonal: the current window matches a recurring pattern")
+    else:
+        parts.append("Stable: no significant change in its rate of change")
+
+    if t.get("new_phrase_count"):
+        parts.append(
+            "%d search phrasing%s appeared for the first time in the last 24 hours, which is demand forming before content exists"
+            % (t["new_phrase_count"], "" if t["new_phrase_count"] == 1 else "s"))
+    if t.get("discovered"):
+        parts.append("The vocabulary itself was discovered by the system, not on the curated watchlist")
+    if t.get("family_count"):
+        parts.append("corroborated by %d independent %s (%s)"
+                     % (t["family_count"],
+                        "line of evidence" if t["family_count"] == 1 else "lines of evidence",
+                        ", ".join(t.get("families") or [])))
+    if t.get("creator_count"):
+        parts.append("%d distinct creators" % t["creator_count"])
+    return "; ".join(parts) + "."
+
+
 def compute_metrics(concept, buckets, now_epoch, extra=None):
     """Compute growth metrics for one concept from its bucketed observations."""
     extra = extra or {}
     keys = sorted(buckets)            # collection cycle ids, in order
-    counts = [buckets[k].get("count", 0) for k in keys]
+    # The growth series uses the *relative* count (share of the cycle's
+    # total activity) so that expanding coverage does not read as growth.
+    counts = [buckets[k].get("count_rel", buckets[k].get("count", 0)) for k in keys]
     views = [buckets[k].get("views", 0.0) for k in keys]
     sources_all = set()
     for k in keys:
         sources_all.update(buckets[k].get("sources") or [])
+    fams = families_for(sources_all)
 
     depth = len(keys)                       # distinct time buckets observed
     raw_obs = sum(buckets[k].get("raw_count", 0) for k in keys)
@@ -230,18 +426,40 @@ def compute_metrics(concept, buckets, now_epoch, extra=None):
     velocity = 0.0
     acceleration = 0.0
     window = 6
+    source_step = 0.0
     if depth >= 4:
         recent = counts[-window:]
         prior = counts[-2 * window:-window] or counts[:-1]
         if prior and recent:
             r_rate = sum(recent) / len(recent)
             p_rate = sum(prior) / len(prior)
-            velocity = _safe_div(r_rate - p_rate, max(p_rate, 0.5))
+            # Scale-free, because the series is relative (a share of the
+            # cycle's total activity) and therefore has no natural floor.
+            # A log-ratio change is the only formulation that stays
+            # meaningful across several orders of magnitude.
+            eps = max(1e-9, 0.02 * (sum(counts) / max(1, len(counts))))
+            velocity = math.log10((r_rate + eps) / (p_rate + eps))
             if len(recent) >= 3 and len(prior) >= 2:
-                half = max(1, len(recent) // 2)
-                rr = sum(recent[-half:]) / half
-                pr = sum(recent[:-half]) / max(1, len(recent) - half)
-                acceleration = _safe_div(rr - pr, max(pr, 0.5))
+                    half = max(1, len(recent) // 2)
+                    rr = sum(recent[-half:]) / half
+                    pr = sum(recent[:-half]) / max(1, len(recent) - half)
+                    acceleration = math.log10((rr + eps) / (pr + eps))
+
+            # If the set of sources feeding this concept changed sharply
+            # between the two windows, the apparent growth is a change in
+            # instrumentation, not in the world. Damp it and say so.
+            def _srcs(seq):
+                out = set()
+                for kk in seq:
+                    out.update(buckets[kk].get("sources") or [])
+                return out
+            prev_srcs = _srcs(keys[-2 * window:-window] or keys[:-1])
+            curr_srcs = _srcs(keys[-window:])
+            added = len(curr_srcs - prev_srcs)
+            if prev_srcs and added >= 2:
+                source_step = min(0.6, 0.25 * added)
+                velocity *= (1.0 - source_step)
+                acceleration *= (1.0 - source_step)
 
     burst, burst_ev = burst_onset_score(buckets, now_epoch)
     series = [(buckets[k].get("epoch", k), buckets[k].get("count", 0)) for k in keys]
@@ -275,12 +493,16 @@ def compute_metrics(concept, buckets, now_epoch, extra=None):
         "acceleration": round(acceleration, 4),
         "burst_score": round(burst, 4),
         "burst_evidence": burst_ev,
+        "source_step_damping": round(source_step, 4),
         "cross_source_count": len(sources_all),
         "sources": sorted(sources_all),
+        "families": fams,
+        "family_count": len(fams),
         "creator_count": len(creators),
         "creator_growth": round(creator_growth, 4),
         "recent_observation": recent_obs,
-        "total_count": sum(counts),
+        "total_count": sum(buckets[k].get("abs_count", buckets[k].get("count", 0)) for k in keys),
+        "relative_series": [round(c, 8) for c in counts],
         "total_views": round(sum(views), 1),
         "seasonality_damp": damp,
         "seasonality": season_info,

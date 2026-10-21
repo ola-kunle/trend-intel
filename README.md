@@ -89,34 +89,86 @@ is never asked for a number.
 
 ---
 
-## Scoring
+## The emergence model
+
+> A trend is a change in the rate of change of a concept's visibility — not its
+> volume. Popularity and emergence are different questions, and this system
+> answers them separately.
+
+The first version of the scorer summed percentile ranks across seven components.
+That was wrong, and the data showed it: **meditation, burnout, anxiety and
+mindfulness topped the "emerging" list**, because a large topic is above the median
+on almost every measure and the sum of eight medians is not a signal. It was a
+popularity ranking wearing an early-detection label.
+
+The current model fixes it in four ways.
+
+### 1. The series is a *share*, not a count
+
+The collector's coverage grows over time — more channels, more categories, more
+seeds — so every concept's raw count drifts upward together. A raw count therefore
+measures the collector, not the topic.
+
+Each concept's volume is divided by the number of distinct sources that fed it
+(so switching a new source on is not mistaken for growth), and then by the cycle's
+total activity (so expanding coverage cancels out). What remains is a **share of
+what the system observed**.
+
+Acceleration is then a **log-ratio change**, the only formulation that stays
+meaningful across the five orders of magnitude the share spans. A topic whose
+share grew 2 % per cycle is not emerging, no matter where it sits in the cohort.
+
+### 2. Growth and confirmation multiply, they do not add
+
+A topic with ten sources and no growth is not emerging. A topic with real growth
+and one source is unconfirmed. Only a product expresses that:
 
 ```
-momentum_score = 100 × Σ wᵢ · percentileᵢ(concept, cohort) × seasonal_damp
+emergence = 100 x growth x (0.25 + 0.75 x confirmation) x (1 + 0.15 x discovery_bonus)
 ```
 
-| Component | Weight | What it measures |
-|---|---|---|
-| `acceleration` | 26% | change in the growth rate — what separates "gaining" from "already popular" |
-| `velocity` | 16% | change in volume against the concept's own prior rate |
-| `burst_onset` | 16% | Kleinberg-style change point on the concept's series |
-| `cross_source` | 14% | number of independent surfaces carrying the topic |
-| `creator_diversity` | 12% | growth in the number of *distinct* creators touching the topic |
-| `relevance` | 10% | distance from the vertical's concept ontology |
-| `evidence_volume` | 6% | total corroborated evidence |
+`growth` blends absolute acceleration with **new search phrasings** — a phrasing
+that has never been seen before is demand forming before there is content to serve
+it, and it is the earliest marker available without a paid API. `confirmation`
+counts **independent families** (search demand, conversation, published video,
+research, reference works, editorial, podcast), not raw source count: two surfaces
+that both reflect the same index are not two confirmations.
 
-Four properties make this defensible rather than arbitrary:
+### 3. Maturity is a separate classification, not a score
 
-1. **No absolute engagement threshold.** Every comparison is against the concept's own
-   trailing baseline.
-2. **A baseline is mandatory.** Below four collection cycles, no growth statistic is
+Every topic gets one of: `new`, `emerging`, `accelerating`, `established`,
+`mature`, `fading`, `recurring`, `steady`.
+
+**Established** means large *and* flat — big and calm is the definition of
+already-established. Those topics appear in their own dashboard section, clearly
+separated, precisely so you can see that they were *excluded* from the emerging
+list. A large topic can be popular and still be flat; conflating the two is the
+failure mode this project exists to avoid.
+
+### 4. "Emerging" requires corroboration
+
+The gate requires either two independent families **or** a burst of new search
+phrasings alongside a second family. A topic moving on one surface is not
+corroborated, and calling it emerging inflates the count with single-surface
+noise. This is also precisely the part a manual check cannot do, because a person
+scrolling one platform has only one surface in view.
+
+### Five properties that make it defensible
+
+1. **No absolute engagement threshold.** Every comparison is against the concept's
+   own trailing baseline.
+2. **A baseline is mandatory.** Below six collection cycles, no growth statistic is
    computed at all.
-3. **Seasonality is subtracted.** Topics in this vertical have a strong annual cycle
-   (sleep, burnout and stress all peak in winter). Without this, every January would
-   produce a false "emerging trend" wave.
-4. **Percentile normalisation, not thresholds.** A score means "how unusual is this
-   relative to what we are currently watching", which is the question that is actually
-   being asked.
+3. **Seasonality is subtracted.** Topics in this vertical have a strong annual
+   cycle (sleep, burnout and stress all peak in winter). Without this, every
+   January would produce a false "emerging trend" wave.
+4. **Source changes are damped.** If the set of sources feeding a concept changed
+   sharply between windows, the apparent growth is a change in instrumentation,
+   not in the world; the score is damped and the fact is recorded.
+5. **The validator replays the production detector.** `tools/validate.py` imports
+   the same `detect` module and the same `pipeline.build_buckets` that run in
+   production, and replays them cycle by cycle over the archived history. A
+   harness that measured a different detector would be measuring nothing.
 
 ---
 
@@ -164,15 +216,25 @@ dashboard shows the relationship rather than merging them.
 | **Lemmy search** | live | public instance API | rotating topics |
 | iTunes / Apple Podcasts | live | public iTunes API | every cycle |
 | Hacker News (Algolia) | live | public API | every cycle |
+| **Reddit rising / top-week RSS** | live | public RSS | rotating sorts |
+| **YouTube channel RSS** (upload velocity) | live | public per-channel feed | every cycle |
+| **Wikipedia category watch** (new articles) | live | Wikimedia API, polite pool | rotating categories |
 | Mastodon trends | live | public API | every cycle |
 | Reddit subreddit RSS | live, **degrading** | public RSS; **ends 13 Nov 2026** | rotating, rate limited |
 | TikTok Creative Center | **blocked** | no public API | attempted, reported honestly |
 | Instagram hashtag search | **awaiting authorisation** | App Review + Public Content Access | inert until a token exists |
 | Threads keyword search | **awaiting authorisation** | App Review for `threads_keyword_search` | inert until a token exists |
 | Pinterest Trends | **awaiting authorisation** | Standard access review | inert until a token exists |
-| **Brave Search API** | **awaiting authorisation** | free monthly credit | inert until a key exists |
-| **YouTube Data API** | **awaiting authorisation** | free 10,000 unit/day quota | inert until a key exists |
+| **Brave Search API** | **disabled by default** | needs a key | code kept, dormant |
+| **YouTube Data API** | **disabled by default** | needs a key | code kept, dormant |
+| **Instagram / Threads / Pinterest** | **disabled by default** | need App Review | code kept, dormant |
 | Google Books | **blocked** | shared project quota exhausted without a key | not used |
+
+The five authorisation-gated integrations are **disabled in configuration** rather
+than deleted. Their code is complete and tested; set `TREND_ENABLE_KEYED=1` and
+supply the matching credential and they start contributing on the next cycle. Until
+then they report themselves as "awaiting authorisation" so their absence is visible
+rather than silent.
 
 ### Why PubMed counts matter
 
@@ -254,6 +316,47 @@ circumvention, and they convert a technical problem into a legal one for a busin
 sits next to therapy and hypnosis.
 
 ---
+
+## Beating manual browsing
+
+The question that matters: **is this actually ahead of someone checking TikTok
+Creative Center and Instagram by hand?**
+
+The honest answer, measured by replaying the production detector over the archived
+history, is on the dashboard's **Validation** panel and the new **Manual Baseline**
+panel, which shows what the manual surfaces are listing *right now* alongside what
+the system is calling emerging.
+
+The manual baseline is Reddit's own `rising` and `top` rankings plus Google's
+trending list, captured continuously rather than occasionally. Reddit's `rising`
+feed is the closest keyless equivalent of the Creative Center list: a platform's own
+algorithmic "this is taking off" ranking, driven by engagement velocity.
+
+The structural advantage comes from what the system can see that a person cannot:
+a topic's **share** of everything observed, its **rate of change** against its own
+baseline, **new search phrasings** appearing before there is content to serve them,
+**independent families** agreeing, and **upload velocity** of creators it watches
+continuously. A person scrolling one platform has one surface in view and no
+history.
+
+**Current measurement, stated plainly:** with 30 collection cycles the comparison
+is not yet conclusive. Early in a run's history the cohort is small and the
+relative-share series is still settling, which produces unreliable early
+classifications; and topics that were already on Reddit's list in the first cycle
+could not have been beaten by definition. The harness reports the number either
+way and refuses to claim more than the data supports.
+
+## Content translation
+
+Every topic with observed demand gets a per-channel angle derived from what was
+actually seen: the short-form video hook is built from the **exact phrasing people
+are searching for**, the carousel from the **spread of phrasings**, and the
+website article from the **questions being asked**. The framing line is governed
+by the curated evidence tier, so `quantum healing hypnosis technique` gets
+"explain what the concept is and where the claims come from, without endorsing
+them", while an established method gets "present it with the research attached".
+Every angle passes through the medical-claim filter, and a topic with no observed
+demand is told there is no signal to write against yet.
 
 ## Validation
 

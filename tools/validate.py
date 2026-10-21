@@ -36,7 +36,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from collector import config, detect, store  # noqa: E402
+from collector import config, detect, pipeline, store  # noqa: E402
 
 MIN_LEAD_TIME_OBSERVATIONS = 4
 
@@ -308,6 +308,196 @@ def false_positive_report(conn, hist, days=30):
     }
 
 
+
+
+def manual_baseline_report(hist, conn=None):
+    """Lead time against the baseline a person actually browses by hand.
+
+    The most honest baseline available without an account is Reddit's own
+    ``rising`` and ``top`` rankings: they are literally what someone
+    scrolling the subreddit would see, and the collector now reads them
+    continuously rather than by hand. TikTok Creative Center cannot be read
+    automatically, so Reddit's algorithmic rising list stands in for it -
+    it is the same kind of surface (a platform's own "this is taking off"
+    ranking) produced by the same kind of signal (engagement velocity).
+
+    For each topic we ask: in which cycle did we first have enough evidence
+    to call it emerging, and in which cycle did it first appear on the
+    manual baseline? The difference, in cycles, is the lead time.
+    """
+    manual_first = {}
+    for concept, h in hist.items():
+        for cycle, srcs in (h.get("sources") or {}).items():
+            for s in srcs:
+                if s in ("reddit_rss",):
+                    # the manual surface
+                    if concept not in manual_first or cycle < manual_first[concept]:
+                        manual_first[concept] = cycle
+
+    rows = []
+    for concept, h in hist.items():
+        series = series_for(hist, concept)
+        det = first_detected(series)
+        if det is None:
+            continue
+        base = manual_first.get(concept)
+        if base is None:
+            continue
+        det_cycle = det          # first_detected returns the cycle id
+        rows.append({
+            "concept": concept,
+            "detected_cycle": det_cycle,
+            "manual_surface_cycle": base,
+            "lead_cycles": det_cycle - base,
+        })
+    rows.sort(key=lambda r: r["lead_cycles"])
+    if not rows:
+        return {
+            "status": "insufficient_data",
+            "n": 0,
+            "message": ("No topic has both an independent detection and a later "
+                        "appearance on the manual baseline yet."),
+        }
+    leads = [r["lead_cycles"] for r in rows]
+    ahead = sum(1 for l in leads if l < 0)
+    behind = sum(1 for l in leads if l > 0)
+    return {
+        "status": "measured",
+        "n": len(rows),
+        "ahead_of_manual": ahead,
+        "behind_manual": behind,
+        "median_lead_cycles": statistics.median(leads),
+        "unit": "collection cycles",
+        "interpretation": (
+            "Negative lead means the system had flagged the topic before it "
+            "appeared on the platform's own rising/top list - that is the "
+            "advantage over browsing by hand. Positive means the manual "
+            "surface got there first."
+        ),
+        "rows": rows[:40],
+    }
+
+
+
+
+def replay_emergence(conn, now=None):
+    """Replay the *production* detector over the archived history.
+
+    This is the apples-to-apples measurement. For every collection cycle in
+    order, the harness rebuilds the buckets from the observations recorded
+    up to that point, runs exactly the same
+    ``detect.compute_metrics`` / ``detect.classify_maturity`` code the live
+    system runs, and records the first cycle at which each concept would
+    have been shown as *emerging* on the dashboard.
+
+    Comparing that to when the topic appeared on the manual baseline (a
+    platform's own rising/top ranking) gives the lead time over browsing by
+    hand, measured on the same detector that makes the claim.
+    """
+    now = now or time.time()
+    rows = conn.execute(
+        "SELECT concept, cycle, epoch, source, metric, value, url, extra "
+        "FROM observations ORDER BY cycle, epoch").fetchall()
+    obs = []
+    for r in rows:
+        if not r["concept"]:
+            continue
+        obs.append({
+            "concept": r["concept"], "cycle": int(r["cycle"] or 0),
+            "epoch": r["epoch"], "source": r["source"], "metric": r["metric"],
+            "value": r["value"], "url": r["url"],
+            "extra": r["extra"] or "{}",
+        })
+    if not obs:
+        return {}
+
+    cycles = sorted({o["cycle"] for o in obs})
+    first_emerging = {}
+    classified_at = {}
+
+    for cut in cycles:
+        prefix = [o for o in obs if o["cycle"] <= cut]
+        if len(prefix) < 100:
+            continue
+        buckets, _totals = pipeline.build_buckets(prefix)
+        rows_b = pipeline.bucket_to_rows(buckets)
+        metrics = {}
+        for c, b in rows_b.items():
+            m = detect.compute_metrics(c, b, now)
+            m["_concept"] = c
+            metrics[c] = m
+        volumes = sorted(m["total_count"] for m in metrics.values())
+        for c, m in metrics.items():
+            below = sum(1 for v in volumes if v < m["total_count"])
+            equal = sum(1 for v in volumes if v == m["total_count"])
+            vol_pct = (below + equal / 2.0) / len(volumes)
+            maturity = detect.classify_maturity(m, vol_pct, now)
+            classified_at.setdefault(c, {})[cut] = maturity
+            if maturity in ("emerging", "accelerating") and c not in first_emerging:
+                first_emerging[c] = cut
+    return {"first_emerging": first_emerging, "by_cycle": classified_at,
+            "cycles": cycles}
+
+
+def manual_baseline_cycles(conn):
+    """First cycle each concept appeared on the manual baseline surface.
+
+    Reddit's ``rising`` and ``top`` rankings are what someone scrolling the
+    subreddit would see. They are the closest keyless equivalent of the
+    TikTok Creative Center list a human checks by hand, and the collector
+    now reads them continuously rather than occasionally.
+    """
+    rows = conn.execute(
+        "SELECT concept, MIN(cycle) c FROM observations "
+        "WHERE source = 'reddit_rss' GROUP BY concept").fetchall()
+    return {r["concept"]: r["c"] for r in rows}
+
+
+def real_lead_time(conn, replay):
+    """Lead time of the production detector against the manual baseline."""
+    if not replay:
+        return {"status": "insufficient_data", "n": 0}
+    manual = manual_baseline_cycles(conn)
+    rows = []
+    for concept, cyc in replay["first_emerging"].items():
+        base = manual.get(concept)
+        if base is None:
+            continue
+        rows.append({
+            "concept": concept,
+            "detected_cycle": cyc,
+            "manual_surface_cycle": base,
+            "lead_cycles": cyc - base,
+        })
+    rows.sort(key=lambda r: r["lead_cycles"])
+    if not rows:
+        return {
+            "status": "insufficient_data", "n": 0,
+            "message": ("No topic has both a production-detector emerging "
+                        "classification and an appearance on the manual "
+                        "baseline yet."),
+        }
+    leads = [r["lead_cycles"] for r in rows]
+    ahead = sum(1 for l in leads if l < 0)
+    behind = sum(1 for l in leads if l > 0)
+    return {
+        "status": "measured",
+        "n": len(rows),
+        "ahead_of_manual": ahead,
+        "behind_manual": behind,
+        "median_lead_cycles": statistics.median(leads),
+        "unit": "collection cycles",
+        "interpretation": (
+            "Negative lead means the dashboard would have shown the topic as "
+            "emerging before it surfaced on the platform's own rising/top "
+            "ranking - that is the advantage over browsing by hand. Positive "
+            "means the manual surface got there first. Measured by "
+            "replaying the production detector over the archived history."
+        ),
+        "rows": rows[:50],
+    }
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default=config.DB_PATH)
@@ -324,6 +514,7 @@ def main():
         if all_ts:
             span_days = (max(all_ts) - min(all_ts)) / 86400.0
 
+    replay = replay_emergence(conn)
     report = {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "history_span_days": round(span_days, 2),
@@ -340,6 +531,8 @@ def main():
         ),
         "lead_time_vs_manual_baseline": lead_time_report(conn, hist, args.days),
         "cross_platform_confirmation": cross_platform_report(hist),
+        "manual_baseline_lead_time": manual_baseline_report(hist, conn),
+        "production_detector_lead_time": real_lead_time(conn, replay),
         "false_positives": false_positive_report(conn, hist, args.days),
         "permutation_test": permutation_test(hist, args.trials),
     }

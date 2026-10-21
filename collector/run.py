@@ -24,7 +24,7 @@ import subprocess
 import sys
 import time
 
-from . import config, concepts, detect, enrich, ontology, sources, store
+from . import config, concepts, content, detect, enrich, ontology, sources, store
 
 START = time.time()
 
@@ -272,12 +272,30 @@ def collect(conn, only=None, quick=False, cycle_id=0):
     except Exception as exc:
         log(f"  manual_captures: failed -> {exc}")
 
+    # --- YouTube channel feeds: upload velocity of real creators ----------
+    from . import channels as channels_mod
+    if ytdlp:
+        chans, added = channels_mod.discover(ytdlp, max_new=40 if not quick else 0)
+        log(f"  channel watchlist: {len(chans)} creators tracked ({added} new)")
+    ch_pairs = channels_mod.pairs(limit=40 if quick else 80)
+    run("youtube_channels", sources.youtube_channels, ch_pairs)
+
+    # --- Wikipedia categories: discovery of articles we did not know about --
+    wiki_cats, cursor = _shortlist(config.WIKIPEDIA_CATEGORIES, cursor,
+                                   2 if quick else 5)
+    run("wikipedia_categories", sources.wikipedia_categories, wiki_cats)
+
     # --- Reddit (last: it is heavily rate limited and must not starve the
     #     other sources of the time budget) ---------------------------------
     subs, cursor = _shortlist(config.REDDIT_SUBREDDITS, cursor,
                               1 if quick else config.REDDIT_PER_CYCLE)
-    for sub in subs:
-        run("reddit_rss", sources.reddit_rss, sub)
+    for i, sub in enumerate(subs):
+        # Rotate the sort. `rising` is Reddit's own algorithmic "this is
+        # taking off" ranking, and `top` for the week is exactly what a
+        # person browsing by hand would see - the baseline the system has
+        # to beat, captured continuously instead of by hand.
+        sort = config.REDDIT_SORTS[i % len(config.REDDIT_SORTS)]
+        run("reddit_rss", sources.reddit_rising, sub, sort)
 
     store.set_state(conn, "cursor", cursor)
     store.set_state(conn, "cycle", cycle + 1)
@@ -304,6 +322,11 @@ def build_payload(conn, health, llm_notes=None):
         if not c:
             continue
         by_concept.setdefault(c, []).append(o)
+    observations = []
+    for o in obs:
+        d = dict(o)
+        d["extra"] = o.get("extra") or "{}"
+        observations.append(d)
 
     # How many collection cycles contributed to each wall-clock hour, across
     # the whole corpus. Reported in the payload so the reader can see how
@@ -314,58 +337,20 @@ def build_payload(conn, health, llm_notes=None):
         bucket_cycles.setdefault(b, set()).add(int(o.get("cycle") or 0))
     cycles_total = len({int(o.get("cycle") or 0) for o in obs})
 
-    # Buckets per concept, keyed by COLLECTION CYCLE rather than wall-clock
-    # hour. The collector runs on a fixed schedule, so a cycle is the natural
-    # unit of time: growth measured per cycle is comparable across runs and
-    # is unaffected by a collector that was restarted or backfilled. Wall
-    # clock is still recorded on every observation for display and for the
-    # lead-time validation.
-    buckets = {}
-    for c, rows_c in by_concept.items():
-        b = {}
-        for r in rows_c:
-            slot = int(r.get("cycle") or 0)
-            s = b.setdefault(slot, {"count": 0.0, "raw_count": 0, "views": 0.0,
-                                    "volume": 0.0, "comments": 0.0,
-                                    "sources": set(), "creators": set(),
-                                    "avg_rank": None, "rank_sum": 0.0,
-                                    "rank_n": 0, "raw": 0.0, "cycles": set(),
-                                    "epochs": []})
-            extra = {}
-            try:
-                extra = json.loads(r.get("extra") or "{}")
-            except Exception:
-                extra = {}
-            # Evidence weight: an exact ontology match counts fully, a
-            # glancing phrase mention inside an unrelated title counts a
-            # little. The raw count is kept alongside so the dashboard can
-            # show "how many raw observations" as well as "how much evidence".
-            w = concepts.evidence_weight(extra.get("resolution"), r["source"])
-            s["count"] += w
-            s["cycles"].add(int(r.get("cycle") or 0))
-            s["epochs"].append(r["epoch"])
-            s["raw_count"] += 1
-            s["raw"] += w
-            s["sources"].add(r["source"])
-            ch = extra.get("channel_id") or extra.get("channel")
-            if ch:
-                s["creators"].add(ch)
-            v = r.get("value")
-            if v is not None:
-                if r["metric"] in ("views", "volume", "comments"):
-                    s[r["metric"]] += float(v)
-                elif r["metric"] == "rank":
-                    s["rank_sum"] += float(v)
-                    s["rank_n"] += 1
-        for s in b.values():
-            s["sources"] = sorted(s["sources"])
-            s["avg_rank"] = (s["rank_sum"] / s["rank_n"]) if s["rank_n"] else None
-            s["epoch"] = sum(s["epochs"]) / len(s["epochs"]) if s["epochs"] else 0
-            s["epoch_max"] = max(s["epochs"]) if s["epochs"] else 0
-            s["cycles"] = sorted(s["cycles"])
-        buckets[c] = b
+    # ---- pass 1: per-cycle totals -------------------------------------
+    # The collector's coverage grows over time (more channels, more
+    # categories, more seeds), so every concept's raw count drifts upward
+    # together. A relative measure cancels that out: what matters is
+    # whether a topic is taking a *larger share* of the attention the
+    # system observes, not whether the system is observing more overall.
+    cycle_totals = {}
+    # Buckets come from the shared pipeline so that the validation harness
+    # measures exactly the same detector that runs in production.
+    from . import pipeline
+    _buckets, cycle_totals = pipeline.build_buckets(observations)
+    buckets = pipeline.bucket_to_rows(_buckets)
 
-    # Cohort for percentile normalisation.
+    # Cohort for the momentum score (evidence-weighted, kept for continuity).
     cohort = {k: [] for k in config.SCORE_WEIGHTS}
     cohort["_relevance"] = {}
     prelim = {}
@@ -381,10 +366,47 @@ def build_payload(conn, health, llm_notes=None):
         cohort["evidence_volume"].append(m["total_count"])
         cohort["_relevance"][c] = concepts.weight_of(c)
 
+    # ---- novelty inputs -------------------------------------------------
+    new_phrases, total_phrases, first_seen_epoch = store.phrase_novelty(conn, 24)
+
+    # cohort for the emergence model
+    ecohort = {k: [] for k in detect.EMERGENCE_WEIGHTS}
+    ecohort["_relevance"] = {}
+    for c, m in prelim.items():
+        m["_concept"] = c
+        m["phrase_novelty_rate"] = (new_phrases.get(c, 0) /
+                                    max(1, total_phrases.get(c, 0)))
+        m["discovery_novelty"] = 1.0 if c.startswith("auto:") else 0.0
+        ecohort["_relevance"][c] = concepts.weight_of(c)
+    for c, m in prelim.items():
+        ecohort["phrase_novelty"].append(m["phrase_novelty_rate"])
+        ecohort["acceleration"].append(m["acceleration"])
+        ecohort["burst_onset"].append(m["burst_score"])
+        ecohort["discovery_novelty"].append(m["discovery_novelty"])
+        ecohort["family_confirmation"].append(m["family_count"])
+        ecohort["velocity"].append(m["velocity"])
+    # recency: a concept seen for the first time recently is earlier news
+    fs_values = sorted(first_seen_epoch.values())
+    for c in prelim:
+        f = first_seen_epoch.get(c)
+        if f is None:
+            prelim[c]["recency"] = 0.0
+        else:
+            prelim[c]["recency"] = 1.0 - (_rank(f, fs_values))
+    ecohort["recency"] = [prelim[c]["recency"] for c in prelim]
+
+    # volume percentile drives the established/mature distinction
+    volumes = sorted(m["total_count"] for m in prelim.values())
+    vol_pct = {}
+    for c, m in prelim.items():
+        vol_pct[c] = _rank(m["total_count"], volumes)
+
     trend_rows = []
     for c, m in prelim.items():
         rows_c = by_concept.get(c, [])
         score, pct = detect.score_concept(m, cohort)
+        escore, epct = detect.emergence_score(m, ecohort)
+        maturity = detect.classify_maturity(m, vol_pct[c], now)
         lifecycle = detect.classify_lifecycle(m, m["time_buckets"], now)
         conf = detect.confidence_level(m, m["time_buckets"])
         questions = detect.audience_questions(rows_c)
@@ -392,6 +414,15 @@ def build_payload(conn, health, llm_notes=None):
         name = c[5:] if c.startswith("auto:") else c
         category = concepts.category_of(c)
         tier = concepts.tier_of(c)
+        category_label = (ontology.CATEGORIES.get(category) or {}).get("label", "Unclassified")
+        translation = content.content_translation(
+            c, rows_c, questions, tier, category_label)
+        why = detect.why_it_matters({
+            "maturity": maturity, "new_phrase_count": new_phrases.get(c, 0),
+            "discovered": c.startswith("auto:"), "family_count": m["family_count"],
+            "families": m["families"], "creator_count": m["creator_count"]})
+        opportunity_note = content.content_opportunity_note(
+            c, rows_c, tier, category_label)
         row = {
             "key": c,
             "name": name,
@@ -426,6 +457,20 @@ def build_payload(conn, health, llm_notes=None):
             "lifecycle_label": LIFECYCLE_LABELS.get(lifecycle, lifecycle),
             "confidence": conf,
             "momentum_score": score,
+            "emergence_score": escore,
+            "emergence_components": {k: round(v, 4) for k, v in epct.items()},
+            "emergence_weights": detect.EMERGENCE_WEIGHTS,
+            "maturity": maturity,
+            "maturity_label": detect.maturity_label(maturity),
+            "volume_percentile": round(vol_pct[c], 4),
+            "families": m["families"],
+            "family_count": m["family_count"],
+            "new_phrase_count": new_phrases.get(c, 0),
+            "total_phrase_count": total_phrases.get(c, 0),
+            "phrase_novelty_rate": round(m["phrase_novelty_rate"], 4),
+            "source_step_damping": m.get("source_step_damping", 0.0),
+            "discovery_novelty": m["discovery_novelty"],
+            "first_seen_epoch": first_seen_epoch.get(c),
             "score_components": {k: round(v, 4) for k, v in pct.items()},
             "score_weights": config.SCORE_WEIGHTS,
             "seasonality": m["seasonality"],
@@ -434,6 +479,9 @@ def build_payload(conn, health, llm_notes=None):
             "evidence": detect.evidence_links(rows_c),
             "questions": questions,
             "opportunities": angles,
+            "content_translation": translation,
+            "why_it_matters": why,
+            "opportunity_note": opportunity_note,
             "geos": sorted({r.get("geo") for r in rows_c if r.get("geo")}),
             "langs": sorted({r.get("lang") for r in rows_c if r.get("lang")}),
             "first_observed": min((r.get("ts") for r in rows_c if r.get("ts")), default=None),
@@ -447,19 +495,29 @@ def build_payload(conn, health, llm_notes=None):
     trend_rows.sort(key=lambda r: r["momentum_score"], reverse=True)
 
     # --- Section views -----------------------------------------------------
-    emerging = [r for r in trend_rows if r["lifecycle"] in ("emerging", "accelerating")]
-    # Topics seen for the first time inside the window. These make no
-    # early-detection claim - they are simply the newest things we noticed.
+    # Emerging is now decided by the maturity model, not by raw acceleration:
+    # a big flat topic must not appear here.
+    emerging = sorted(
+        [r for r in trend_rows if r["maturity"] in ("emerging", "accelerating")],
+        key=lambda r: r["emergence_score"], reverse=True)
+    established = sorted(
+        [r for r in trend_rows if r["maturity"] in ("established", "mature")],
+        key=lambda r: r["momentum_score"], reverse=True)
     newly_observed = sorted(
-        [r for r in trend_rows if r["lifecycle"] == "newly_observed"],
-        key=lambda r: (r["cross_source_count"], r["observations"]), reverse=True)
+        [r for r in trend_rows if r["maturity"] == "new"],
+        key=lambda r: (r["family_count"], r["observations"]), reverse=True)
+    # "Before it goes viral" is deliberately strict: a baseline must exist,
+    # two independent lines of evidence must agree, and there must be either
+    # a burst onset or brand-new search phrasings. Anything looser would be a
+    # prediction dressed as a measurement.
     before_viral = sorted(
         [r for r in trend_rows
-         if r["lifecycle"] in ("emerging", "accelerating")
-         and r["cross_source_count"] >= 2
-         and r["burst_score"] >= 0.25],
-        key=lambda r: (r["burst_score"] * r["cross_source_count"] * r["momentum_score"]),
-        reverse=True)
+         if r["maturity"] == "emerging"
+         and r["has_baseline"]
+         and r["family_count"] >= 2
+         and r["emergence_score"] >= 40.0
+         and (r["new_phrase_count"] > 0 or r["burst_score"] >= 0.35)],
+        key=lambda r: r["emergence_score"], reverse=True)[:8]
     fastest = sorted(trend_rows, key=lambda r: r["acceleration"], reverse=True)
     cross = [r for r in trend_rows if r["cross_source_count"] >= 2]
 
@@ -570,6 +628,7 @@ def build_payload(conn, health, llm_notes=None):
             "fastest": [r["key"] for r in fastest],
             "cross_platform": [r["key"] for r in cross],
             "newly_observed": [r["key"] for r in newly_observed],
+            "established": [r["key"] for r in established],
         },
         "questions": all_questions[:90],
         "new_phrasings": store.new_phrasings(conn, within_hours=72, limit=90),
@@ -577,10 +636,20 @@ def build_payload(conn, health, llm_notes=None):
         "regional": regional,
         "source_health": source_health,
         "captures": _capture_summary(),
+        "manual_baseline": _manual_baseline(trend_rows, by_concept),
         "llm": {"provider": enrich.available(),
                 "enabled": bool(enrich.available())},
     }
     return payload, trend_rows, by_concept
+
+
+def _rank(value, sorted_values):
+    """Percentile rank of value within sorted_values (0..1)."""
+    if not sorted_values:
+        return 0.0
+    below = sum(1 for v in sorted_values if v < value)
+    equal = sum(1 for v in sorted_values if v == value)
+    return (below + equal / 2.0) / len(sorted_values)
 
 
 def _median_cycle_interval(conn):
@@ -602,6 +671,49 @@ def _median_cycle_interval(conn):
         return None
     gaps.sort()
     return round(gaps[len(gaps) // 2], 3)
+
+
+def _extra(row):
+    """The extra JSON on an observation row, as a dict."""
+    import json as _json
+    v = row.get("extra")
+    if isinstance(v, dict):
+        return v
+    try:
+        return _json.loads(v or "{}")
+    except Exception:
+        return {}
+
+
+def _manual_baseline(trend_rows, by_c):
+    """What a person browsing by hand would see right now.
+
+    Reddit's own rising and top rankings, plus Google's trending list. These
+    are the surfaces a practitioner checks manually, captured continuously so
+    the comparison against the automated panel is honest rather than
+    remembered.
+    """
+    out = []
+    for c, rows_c in by_c.items():
+        manual = [r for r in rows_c
+                  if r.get("source") in ("reddit_rss", "google_trends_now")]
+        if not manual:
+            continue
+        t = next((x for x in trend_rows if x["key"] == c), None)
+        if not t:
+            continue
+        out.append({
+            "key": c,
+            "name": t["name"],
+            "maturity": t["maturity_label"],
+            "emergence_score": t["emergence_score"],
+            "surfaces": sorted({r.get("source") for r in manual}),
+            "signals": sorted({_extra(r).get("signal")
+                               for r in manual if _extra(r).get("signal")}),
+            "count": len(manual),
+        })
+    out.sort(key=lambda r: -r["count"])
+    return out[:60]
 
 
 def _capture_summary():
@@ -735,10 +847,10 @@ def main():
     print(f"  Audience questions    : {len(payload['questions'])}")
     print(f"  Content opportunities : {len(payload['opportunities'])}")
     print("=" * 66)
-    for r in trend_rows[:12]:
-        print(f"  {r['momentum_score']:5.1f}  {r['name'][:38]:38s} "
-              f"{r['lifecycle_label'][:18]:18s} src={r['cross_source_count']} "
-              f"conf={r['confidence']['level']}")
+    for r in sorted(trend_rows, key=lambda x: -x["emergence_score"])[:14]:
+        print(f"  {r['emergence_score']:5.1f}  {r['name'][:34]:34s} "
+              f"{r['maturity_label'][:16]:16s} acc={r['acceleration']:+.3f} "
+              f"fam={r['family_count']} newphr={r['new_phrase_count']}")
     print()
     conn.close()
 

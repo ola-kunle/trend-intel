@@ -18,7 +18,7 @@
   var S = {
     data: null,
     filtered: [],
-    filters: { q: "", category: "", geo: "", source: "", lifecycle: "", confidence: "", tier: "", minscore: 0 },
+    filters: { q: "", category: "", geo: "", source: "", lifecycle: "", confidence: "", tier: "", minscore: 0, family: "" },
     byKey: {}
   };
 
@@ -178,7 +178,8 @@
     S.filtered = (S.data.trends || []).filter(function (t) {
       if (f.category && t.category !== f.category) return false;
       if (f.tier && t.evidence_tier !== f.tier) return false;
-      if (f.lifecycle && t.lifecycle !== f.lifecycle) return false;
+      if (f.lifecycle && t.maturity !== f.lifecycle) return false;
+      if (f.family && (t.families || []).indexOf(f.family) < 0) return false;
       if (f.confidence && (t.confidence || {}).level !== f.confidence) return false;
       if (f.geo && (t.geos || []).indexOf(f.geo) < 0) return false;
       if (f.source && (t.sources || []).indexOf(f.source) < 0) return false;
@@ -236,37 +237,42 @@
   function card(t) {
     var conf = t.confidence || { level: "low", reasons: [] };
     var tier = t.evidence_tier || "adjacent";
-    var tierLabel = t.evidence_tier_label || tier;
     var badges = [];
-    badges.push('<span class="badge lifecycle ' + esc(t.lifecycle) + '">' + esc(t.lifecycle_label || t.lifecycle) + "</span>");
+    badges.push('<span class="badge maturity ' + esc(t.maturity) + '">' + esc(t.maturity_label || t.maturity) + "</span>");
     badges.push('<span class="badge conf-' + esc(conf.level) + '">confidence: ' + esc(conf.level) + "</span>");
-    badges.push('<span class="badge tier-' + esc(tier) + '">' + esc(tierLabel) + "</span>");
-    if (t.discovered) badges.push('<span class="badge src">newly discovered</span>');
-    if (t.first_seen_recent) badges.push('<span class="badge src">first seen &lt; 24h</span>');
+    badges.push('<span class="badge tier-' + esc(tier) + '">' + esc(t.evidence_tier_label || tier) + "</span>");
+    if (t.discovered) badges.push('<span class="badge src">system-discovered</span>');
 
-    var srcBadges = (t.sources || []).slice(0, 6).map(function (s) {
-      return '<span class="badge src">' + esc(SOURCE_SHORT[s] || s) + "</span>";
+    var fams = (t.families || []).map(function (f) {
+      return '<span class="badge src">' + esc(FAMILY_LABELS[f] || f) + "</span>";
     }).join("");
 
-    var angles = (t.opportunities || []).slice(0, 3).map(function (a) {
-      return '<div class="angle">' + esc(a.angle) +
+    var angles = (t.content_translation || []).slice(0, 2).map(function (a) {
+      return '<div class="angle"><b>' + esc(a.channel) + ":</b> " + esc(a.angle) +
         (a.flagged ? '<span class="flag">' + esc(a.flagged) + "</span>" : "") + "</div>";
     }).join("");
+
+    var firstSeen = t.first_observed ? ago(t.first_observed) : "—";
 
     return '<article class="card" data-key="' + esc(t.key) + '">' +
       '<div class="card-left">' +
       '<div class="card-title"><h3>' + esc(t.name) + "</h3></div>" +
       '<div class="card-sub">' + esc(t.category_label || "Unclassified") +
-      " · first observed " + esc(ago(t.first_observed)) +
+      " · first observed " + esc(firstSeen) +
       " · last signal " + esc(ago(t.last_observed)) + "</div>" +
       '<div class="badges">' + badges.join("") + "</div>" +
-      '<div class="badges">' + srcBadges + "</div>" +
-      '<div class="why">' + whyLine(t) + "</div>" +
+      '<div class="badges">' + fams + "</div>" +
+      '<div class="why">' + esc(t.why_it_matters || "") + "</div>" +
+      (t.new_phrase_count ? '<div class="why"><b>' + t.new_phrase_count +
+        "</b> new search phrasing" + (t.new_phrase_count === 1 ? "" : "s") +
+        " since the previous cycle &middot; acceleration <b>" +
+        (t.acceleration >= 0 ? "+" : "") + (t.acceleration * 100).toFixed(0) +
+        "%</b> of its own baseline</div>" : "") +
       (angles ? '<div class="angles">' + angles + "</div>" : "") +
       "</div>" +
       '<div class="card-right">' +
-      '<div class="score"><div class="num">' + (t.momentum_score || 0).toFixed(1) + '</div><div class="lbl">momentum</div>' +
-      '<div class="bar"><i style="width:' + Math.max(2, Math.min(100, t.momentum_score || 0)) + '%"></i></div></div>' +
+      '<div class="score"><div class="num">' + (t.emergence_score || 0).toFixed(1) + '</div><div class="lbl">emergence</div>' +
+      '<div class="bar"><i style="width:' + Math.max(2, Math.min(100, t.emergence_score || 0)) + '%"></i></div></div>' +
       sparkline(t.series) +
       "</div></article>";
   }
@@ -306,7 +312,8 @@
       { k: "Active in window", v: num(st.concepts_active), n: (st.window_days || 0) + " days" },
       { k: "Observations stored", v: num(st.observations_total), n: "timestamped" },
       { k: "Sources healthy", v: (st.sources_ok || 0) + "/" + (st.sources_total || 0), n: "live now", cls: st.sources_ok === st.sources_total ? "good" : "warn" },
-      { k: "Emerging", v: num(((d.sections || {}).emerging || []).length), n: "with baseline", cls: "good" },
+      { k: "Emerging", v: num(((d.sections || {}).emerging || []).length), n: "rate of change rising", cls: "good" },
+      { k: "Established", v: num(((d.sections || {}).established || []).length), n: "big but flat", cls: "warn" },
       { k: "Cross-surface", v: num(((d.sections || {}).cross_platform || []).length), n: "2+ sources" },
       { k: "Audience questions", v: num((d.questions || []).length), n: "captured" },
       { k: "Content angles", v: num((d.opportunities || []).length), n: "evidence-based" }
@@ -560,6 +567,30 @@
       "<p>Every topic on this site is discovered from the free public surfaces listed under Methodology, or captured by a human from a platform that does not expose an API. Nothing here is inferred from engagement figures TikTok or Instagram have not published, and no topic claims Instagram or TikTok reach unless a capture says so.</p>";
   }
 
+  function renderBaseline() {
+    var el = $("#list-baseline");
+    if (!el) return;
+    var rows = (S.data && S.data.manual_baseline) || [];
+    if (!rows.length) {
+      el.innerHTML = emptyState("The manual-baseline surfaces had nothing matching the vertical in the last cycle.");
+      return;
+    }
+    el.innerHTML = '<div class="table-wrap"><table class="data-table">' +
+      "<thead><tr><th>Topic</th><th>On the manual surface</th><th>Signal</th>" +
+      "<th>System verdict</th><th>Emergence</th></tr></thead><tbody>" +
+      rows.map(function (r) {
+        var surf = (r.surfaces || []).map(function (x) {
+          return SOURCE_SHORT[x] || x;
+        }).join(", ");
+        var sig = (r.signals || []).join(", ");
+        return "<tr><td class=\"name\">" + esc(r.name) + "</td>" +
+          "<td>" + esc(surf) + " (" + r.count + ")</td>" +
+          "<td>" + esc(sig || "—") + "</td>" +
+          "<td><span class=\"badge maturity " + esc(r.maturity.toLowerCase().replace(/[^a-z]+/g, "-")) + "\">" + esc(r.maturity) + "</span></td>" +
+          "<td class=\"num\">" + (r.emergence_score || 0).toFixed(1) + "</td></tr>";
+      }).join("") + "</tbody></table></div>";
+  }
+
   function renderMethod() {
     var m = S.data.methodology || {};
     var w = m.weights || {};
@@ -667,6 +698,8 @@
       }).slice(0, 20), "Nothing to rank yet.");
     }
     renderCards("list-cross", pick(sec.cross_platform), "No topic yet appears on two independent sources.");
+    renderCards("list-established", pick(sec.established), "Nothing has been classified as established yet.");
+    renderBaseline();
     renderCaptures();
     renderPlatforms();
     renderQuestions();
@@ -711,7 +744,15 @@
       " · momentum " + (t.momentum_score || 0).toFixed(1);
     $("#drawer-body").innerHTML =
       (t.note ? '<div class="note"><span class="tag">Narrative note — generated prose, not a measurement</span>' + esc(t.note) + "</div>" : "") +
-      "<h4>Why it is on this list</h4><p>" + whyLine(t) + "</p>" +
+      "<h4>Why it is on this list</h4><p>" + esc(t.why_it_matters || whyLine(t)) + "</p>" +
+      "<h4>Emergence components</h4><dl class=\"kv\">" +
+      "<dt>Emergence score</dt><dd>" + (t.emergence_score || 0).toFixed(1) + " / 100</dd>" +
+      "<dt>Acceleration (own baseline)</dt><dd>" + (t.acceleration >= 0 ? "+" : "") + (t.acceleration * 100).toFixed(1) + "%</dd>" +
+      "<dt>New search phrasings</dt><dd>" + (t.new_phrase_count || 0) + " of " + (t.total_phrase_count || 0) + "</dd>" +
+      "<dt>Independent lines of evidence</dt><dd>" + (t.family_count || 0) + " (" + esc((t.families || []).map(function (f) { return FAMILY_LABELS[f] || f; }).join(", ")) + ")</dd>" +
+      "<dt>Volume percentile</dt><dd>" + Math.round((t.volume_percentile || 0) * 100) + "% of the cohort</dd>" +
+      "<dt>Maturity</dt><dd>" + esc(t.maturity_label || t.maturity) + "</dd>" +
+      "</dl>" +
       "<h4>Evidence tier</h4><p><strong>" + esc(t.evidence_tier_label) + "</strong> — " + esc(t.evidence_tier_note) + " <em>How to check: " + esc(t.evidence_tier_check) + "</em></p>" +
       "<h4>Measurements</h4><dl class=\"kv\">" +
       "<dt>Observations</dt><dd>" + (t.observations || 0) + "</dd>" +
@@ -734,6 +775,15 @@
       (rel ? "<h4>Related but distinct</h4><ul>" + rel + "</ul>" : "") +
       (qs ? "<h4>Audience questions</h4><ul>" + qs + "</ul>" : "") +
       "<h4>Original evidence (" + (t.evidence || []).length + ")</h4>" + (ev || "<p>No evidence links captured.</p>") +
+      "<h4>How this could become content</h4>" +
+      ((t.content_translation || []).length
+        ? "<ul>" + t.content_translation.map(function (a) {
+            return "<li><b>" + esc(a.channel) + "</b> — " + esc(a.angle) +
+              (a.flagged ? " <em>(" + esc(a.flagged) + ")</em>" : "") +
+              "<br><span style=\"color:var(--ink-faint);font-size:11.5px\">" +
+              esc(a.format) + " · " + esc(a.basis) + "</span></li>";
+          }).join("") + "</ul>"
+        : "<p>No content angles yet.</p>") +
       "<h4>Content angles</h4><ul>" +
       (t.opportunities || []).map(function (a) {
         return "<li>" + esc(a.angle) + (a.flagged ? " <em>(" + esc(a.flagged) + ")</em>" : "") + "</li>";
@@ -776,6 +826,12 @@
     other_manual: "Manual capture"
   };
 
+  var FAMILY_LABELS = {
+    search_intent: "search demand", social: "conversation", video: "published video",
+    research: "research", reference: "reference works", editorial: "editorial",
+    podcast: "podcast", platform_trend: "platform trend list"
+  };
+
   function populateFilters() {
     var d = S.data;
     function opts(sel, items, labeller) {
@@ -793,9 +849,14 @@
     (d.trends || []).forEach(function (t) { (t.sources || []).forEach(function (s) { srcs[s] = 1; }); });
     opts("#f-source", Object.keys(srcs).sort(), function (s) { return SOURCE_SHORT[s] || s; });
     var lifes = {};
-    (d.trends || []).forEach(function (t) { lifes[t.lifecycle] = 1; });
+    (d.trends || []).forEach(function (t) { lifes[t.maturity] = 1; });
     opts("#f-lifecycle", Object.keys(lifes).sort(), function (l) {
-      return (d.trends.filter(function (t) { return t.lifecycle === l; })[0] || {}).lifecycle_label || l;
+      return (d.trends.filter(function (t) { return t.maturity === l; })[0] || {}).maturity_label || l;
+    });
+    var fams = {};
+    (d.trends || []).forEach(function (t) { (t.families || []).forEach(function (f) { fams[f] = 1; }); });
+    opts("#f-family", Object.keys(fams).sort(), function (f) {
+      return (FAMILY_LABELS[f] || f);
     });
     opts("#f-confidence", ["high", "moderate", "low"]);
     opts("#f-tier", Object.keys(d.evidence_tiers || {}), function (k) { return d.evidence_tiers[k].label; });
@@ -823,7 +884,7 @@
 
   function bind() {
     $("#f-search").addEventListener("input", function (e) { S.filters.q = e.target.value; applyFilters(); });
-    ["#f-category", "#f-geo", "#f-source", "#f-lifecycle", "#f-confidence", "#f-tier"].forEach(function (sel) {
+    ["#f-category", "#f-geo", "#f-source", "#f-lifecycle", "#f-confidence", "#f-tier", "#f-family"].forEach(function (sel) {
       $(sel).addEventListener("change", function (e) {
         S.filters[sel.replace("#f-", "")] = e.target.value; applyFilters();
       });
@@ -832,9 +893,9 @@
       S.filters.minscore = Number(e.target.value || 0); applyFilters();
     });
     $("#f-clear").addEventListener("click", function () {
-      S.filters = { q: "", category: "", geo: "", source: "", lifecycle: "", confidence: "", tier: "", minscore: 0 };
+      S.filters = { q: "", category: "", geo: "", source: "", lifecycle: "", confidence: "", tier: "", minscore: 0, family: "" };
       $("#f-search").value = "";
-      ["#f-category", "#f-geo", "#f-source", "#f-lifecycle", "#f-confidence", "#f-tier"].forEach(function (s) { $(s).value = ""; });
+      ["#f-category", "#f-geo", "#f-source", "#f-lifecycle", "#f-confidence", "#f-tier", "#f-family"].forEach(function (s) { $(s).value = ""; });
       $("#f-minscore").value = "0";
       applyFilters();
     });

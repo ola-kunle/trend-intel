@@ -1097,3 +1097,140 @@ def youtube_data_api(key=None, queries=None, region="US"):
                        "intent": ontology.classify_intent(title)},
             ))
     return out, {"queries": len(queries)}
+
+
+# ---------------------------------------------------------------------------
+# 20. Reddit rising / top-week RSS - Reddit's own early-detection algorithm
+# ---------------------------------------------------------------------------
+
+def reddit_rising(subreddit, sort="rising", period="week"):
+    """Reddit's `rising` and `top` feeds, via public RSS.
+
+    This is the most valuable social addition available without an account,
+    because `rising` is Reddit's own algorithmic "this is taking off"
+    ranking, and `top` for the week is what a human browsing manually would
+    see. Both are the manual baseline the system has to beat, captured
+    continuously rather than by hand.
+    """
+    url = "https://www.reddit.com/r/%s/%s/.rss?limit=50" % (subreddit, sort)
+    if period and sort != "rising":
+        url += "&t=" + period
+    body = fetch(url, min_interval=config.REDDIT_MIN_INTERVAL_SECONDS,
+                 timeout=15, retries=0)[1]
+    try:
+        root = ET.fromstring(body)
+    except ET.ParseError as exc:
+        raise FetchError(url, None, f"RSS parse error: {exc}")
+    out = []
+    for entry in root.findall("atom:entry", NS):
+        title = (entry.findtext("atom:title", "", NS) or "").strip()
+        link = entry.findtext("atom:link", "", NS)
+        updated = entry.findtext("atom:updated", "", NS)
+        if not title:
+            continue
+        key, how = concepts.resolve_or_discover(title, allow_mint=False)
+        if not key:
+            continue
+        out.append(_row(
+            source="reddit_rss", geo="GLOBAL", lang="en", surface="social",
+            concept=key, raw_text=title, metric="count", value=1.0,
+            url=link,
+            extra={"subreddit": subreddit, "sort": sort, "period": period,
+                   "updated": updated, "resolution": how,
+                   "intent": ontology.classify_intent(title),
+                   "signal": "rising" if sort == "rising" else "top"},
+        ))
+    return out, {"subreddit": subreddit, "sort": sort, "entries": len(out)}
+
+
+# ---------------------------------------------------------------------------
+# 21. YouTube channel RSS - upload velocity, no key required
+# ---------------------------------------------------------------------------
+
+def youtube_channels(channel_ids):
+    """Per-channel upload feeds from YouTube's public RSS.
+
+    YouTube publishes a keyless RSS feed per channel. Polling it gives the
+    *upload velocity* of a specific creator, which is a supply-side early
+    signal: a creator who normally publishes weekly and suddenly publishes
+    three videos on a new subject is a signal about that subject, and it
+    arrives before any engagement data would.
+
+    The watchlist is built by finding the channels that actually publish on
+    each vertical topic, then tracking them from then on.
+    """
+    out = []
+    for cid, name in channel_ids:
+        url = ("https://www.youtube.com/feeds/videos.xml?channel_id=" + cid)
+        try:
+            body = fetch(url, min_interval=0.3, timeout=15, retries=0)[1]
+            root = ET.fromstring(body)
+        except (FetchError, ET.ParseError):
+            continue
+        ns = {"a": "http://www.w3.org/2005/Atom", "yt": "http://www.youtube.com/xml/schemas/2015",
+              "media": "http://search.yahoo.com/mrss/"}
+        for entry in root.findall("a:entry", ns):
+            title = (entry.findtext("a:title", "", ns) or "").strip()
+            published = entry.findtext("a:published", "", ns)
+            vid = entry.findtext("yt:videoId", "", ns)
+            if not title:
+                continue
+            key, how = concepts.resolve_or_discover(title, allow_mint=False)
+            if not key:
+                continue
+            out.append(_row(
+                source="youtube_channels", geo="GLOBAL", lang="en", surface="video",
+                concept=key, raw_text=title, metric="count", value=1.0,
+                url=("https://www.youtube.com/watch?v=" + vid) if vid else None,
+                extra={"channel": name, "channel_id": cid, "published": published,
+                       "feed": "channel", "resolution": how,
+                       "intent": ontology.classify_intent(title)},
+            ))
+    return out, {"channels": len(channel_ids)}
+
+
+# ---------------------------------------------------------------------------
+# 22. Wikipedia category watch - new articles inside a wellness category
+# ---------------------------------------------------------------------------
+
+def wikipedia_categories(categories, lang="en"):
+    """Members of a Wikipedia category, via CirrusSearch.
+
+    Two uses. First, it is a discovery mechanism: `incategory:"Hypnotherapy"`
+    surfaces articles the curated seed list would never have contained
+    (Coue, Bernheim, NLP). Second, because the collector remembers what it
+    has already seen, an article that appears for the first time is a *new
+    concept appearing in public reference*, which is one of the earliest
+    markers there is.
+
+    Each member's pageview count is captured so a new article can be watched
+    as it accumulates readership.
+    """
+    out = []
+    for cat in categories:
+        url = ("https://%s.wikipedia.org/w/api.php?action=query&list=search&format=json"
+               "&srlimit=30&srprop=timestamp&srsearch=%s"
+               % (lang, urllib.parse.quote('incategory:"%s"' % cat)))
+        try:
+            data = fetch_json(url, min_interval=1.2, timeout=15, retries=0,
+                              headers={"User-Agent": config.WIKIMEDIA_UA,
+                                       "Api-User-Agent": config.WIKIMEDIA_UA})
+        except FetchError:
+            continue
+        for hit in (data.get("query") or {}).get("search", []):
+            title = hit.get("title") or ""
+            if not title:
+                continue
+            key, how = concepts.resolve_or_discover(title, allow_mint=False)
+            if not key:
+                continue
+            out.append(_row(
+                source="wikipedia_categories", geo="GLOBAL", lang=lang,
+                surface="wiki", concept=key, raw_text=title, metric="count",
+                value=1.0,
+                url="https://%s.wikipedia.org/wiki/%s" % (lang, urllib.parse.quote(title.replace(" ", "_"))),
+                extra={"category": cat, "created": hit.get("timestamp"),
+                       "feed": "category", "resolution": how},
+            ))
+    return out, {"categories": len(categories)}
+

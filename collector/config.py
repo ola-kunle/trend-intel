@@ -64,6 +64,12 @@ REDDIT_SUBREDDITS = [
 REDDIT_MIN_INTERVAL_SECONDS = 8.0
 REDDIT_PER_CYCLE = 2
 
+# Which Reddit listing to read. `rising` is Reddit's own algorithmic
+# "this is taking off" ranking and `top` for the week is what a person
+# browsing manually would see. Both are the manual baseline, captured
+# continuously rather than by hand.
+REDDIT_SORTS = ["rising", "top", "new"]
+
 # --- YouTube ---------------------------------------------------------------
 
 # yt-dlp search queries. Kept modest: each search is a real network round trip.
@@ -106,40 +112,66 @@ SUGGEST_MAX_PER_SEED = 8
 # an event, not an emerging topic, and minting it would fill the store with
 # fragments.
 MINT_ALLOWED_SOURCES = {
-    "europepmc",       # research paper titles are genuinely topic-like
-    "arxiv",           # preprint titles are too
-    "youtube_search",  # video titles describe a subject
-    "wikipedia_views", # article titles are canonical
+    # Only surfaces whose text is a short, topic-shaped phrase may mint a
+    # new concept. A paper title ("Sleep I am positive affirmations") or a
+    # news headline is a sentence about a topic, not a topic, and minting
+    # those fills the store with fragments. Search phrasings and Wikipedia
+    # article titles are the right shape.
+    "wikipedia_views",     # article titles are canonical
+    "wikipedia_categories", # and so are category members
 }
 
-
-# --- Source toggles --------------------------------------------------------
-#
-# Sources are individually switchable so a degraded source can be turned off
-# without a code change, and so the health report can distinguish "disabled"
-# from "failing".
-
 SOURCES = {
+    # --- free, keyless, no registration required -------------------------
     "google_trends_rss": True,
     "google_trends_now": True,
     "google_suggest": True,
     "youtube_suggest": True,
     "youtube_search": True,
+    "youtube_channels": True,
     "wikipedia_views": True,
+    "wikipedia_categories": True,
     "mastodon_trends": True,
+    "mastodon_search": True,
+    "lemmy_search": True,
     "reddit_rss": True,
     "news_rss": True,
     "europepmc": True,
+    "pubmed_counts": True,
+    "arxiv": True,
     "itunes_podcasts": True,
     "hn_algolia": True,
     "tiktok_creative": True,
-    "pubmed_counts": True,
-    "mastodon_search": True,
-    "lemmy_search": True,
-    "arxiv": True,
-    "brave_search": True,
-    "youtube_data_api": True,
+
+    # --- require an account, an app review or a key ----------------------
+    # Disabled by default. The code is kept and works; it simply stays
+    # dormant until a credential is supplied, so the system never depends on
+    # something it cannot legally or practically reach.
+    "brave_search": False,
+    "youtube_data_api": False,
+    "instagram_hashtag": False,
+    "threads_search": False,
+    "pinterest_trends": False,
 }
+
+KEYED_SOURCES = {
+    "brave_search", "youtube_data_api", "instagram_hashtag",
+    "threads_search", "pinterest_trends",
+}
+
+# Opt in explicitly, e.g. TREND_ENABLE_KEYED=1 plus the matching credential.
+if os.environ.get("TREND_ENABLE_KEYED", "").strip() in ("1", "true", "yes"):
+    for _k in KEYED_SOURCES:
+        SOURCES[_k] = True
+
+# Wikipedia categories watched for new articles inside the vertical.
+WIKIPEDIA_CATEGORIES = [
+    "Hypnotherapy", "Hypnosis", "Mental health", "Self-help",
+    "Cognitive behavioral therapy", "Meditation", "Mindfulness",
+    "Somatic therapy", "Energy healing", "Spirituality", "Neuroplasticity",
+    "Attachment theory", "Trauma", "Burnout", "Wellness",
+    "Manifestation", "Reiki", "EMDR", "Positive psychology",
+]
 
 # --- Instagram hashtag budget ----------------------------------------------
 #
@@ -248,8 +280,13 @@ SCORE_WEIGHTS = {
 # it a trend rather than an observation.
 CROSS_SOURCE_MIN = 2
 
-# Minimum observation points before any growth statistic is reported.
-MIN_OBSERVATIONS = 4
+# Minimum distinct collection cycles before any growth statistic is reported.
+# Four was too few: with a four-cycle window the cohort is small, the
+# relative-share series is still settling after coverage changes, and the
+# resulting classifications are noisy enough to produce false "emerging"
+# calls. Six cycles is the point at which the baseline starts to mean
+# something.
+MIN_OBSERVATIONS = 6
 
 # Minimum distinct sources before "cross-platform signal" is asserted.
 MIN_CROSS_SOURCE = 2

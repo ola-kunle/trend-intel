@@ -319,6 +319,52 @@ def new_phrasings(conn, within_hours=72, limit=80):
     return out
 
 
+def phrase_novelty(conn, within_hours=24):
+    """How many search phrasings are new for each concept, and how many it has.
+
+    A phrasing that has never been seen before is the earliest observable
+    marker of an emerging interest that does not need a paid API: the demand
+    exists before there is content to serve it.
+
+    Returns (new_counts, total_counts, first_seen_epoch).
+    """
+    # Novelty must be measured against the *previous probe of the same
+    # concept*, not against the first time a phrasing was ever stored. The
+    # collector rotates through its seed list, so a phrasing reappears
+    # whenever its seed comes round again: comparing against the global
+    # first-seen would report every phrasing as new on every cycle, which
+    # is a rotation artefact rather than a signal.
+    rows = conn.execute(
+        "SELECT concept, cycle, raw_text, MIN(epoch) f FROM observations "
+        "WHERE source IN ('google_suggest','youtube_suggest') "
+        "GROUP BY concept, cycle, raw_text").fetchall()
+
+    by_concept_cycle = {}
+    first_seen = {}
+    for r in rows:
+        c = r["concept"]
+        if not c:
+            continue
+        cyc = int(r["cycle"] or 0)
+        by_concept_cycle.setdefault(c, {}).setdefault(cyc, set()).add(r["raw_text"])
+        f = r["f"]
+        if c not in first_seen or f < first_seen[c]:
+            first_seen[c] = f
+
+    new_counts, total_counts = {}, {}
+    for c, cycles in by_concept_cycle.items():
+        ordered = sorted(cycles)
+        latest = cycles[ordered[-1]]
+        total_counts[c] = len(latest)
+        if len(ordered) < 2:
+            # Only ever probed once: novelty is unknowable, not zero.
+            new_counts[c] = 0
+            continue
+        previous = cycles[ordered[-2]]
+        new_counts[c] = len(latest - previous)
+    return new_counts, total_counts, first_seen
+
+
 def daily_aggregates(conn, days=120):
     """Per-concept per-day aggregates used to build the durable series."""
     cutoff = time.time() - days * 86400

@@ -692,3 +692,49 @@ details.plain summary:hover { color: var(--accent); }
 @media (max-width: 780px) {
   .capture-grid { grid-template-columns: 1fr; }
 }
+
+/* ==========================================================================
+   Maturity badges - the distinction between emerging and already-known
+   ========================================================================== */
+
+.badge.maturity { letter-spacing: .06em; }
+.badge.maturity.emerging {
+  color: #052e2a; background: var(--accent); border-color: var(--accent);
+  font-weight: 750;
+}
+.badge.maturity.accelerating {
+  color: #052e2a; background: var(--green); border-color: var(--green);
+  font-weight: 750;
+}
+.badge.maturity.established {
+  color: var(--ink-faint); background: transparent; border-color: var(--line);
+}
+.badge.maturity.mature {
+  color: var(--ink-dim); background: rgba(255,255,255,.04); border-color: var(--line);
+}
+.badge.maturity.steady {
+  color: var(--ink-dim); background: transparent; border-color: var(--line);
+}
+.badge.maturity.new {
+  color: var(--accent-2); background: rgba(125,211,252,.10); border-color: rgba(125,211,252,.35);
+}
+.badge.maturity.fading {
+  color: var(--rose); background: rgba(251,113,133,.09); border-color: rgba(251,113,133,.35);
+}
+.badge.maturity.recurring {
+  color: var(--violet); background: rgba(196,181,253,.09); border-color: rgba(196,181,253,.35);
+}
+[data-theme="light"] .badge.maturity.emerging,
+[data-theme="light"] .badge.maturity.accelerating { color: #fff; }
+[data-theme="light"] .badge.maturity.mature { background: rgba(0,0,0,.03); }
+
+/* ==========================================================================
+   Manual baseline comparison
+   ========================================================================== */
+
+.baseline-grid { display: grid; gap: 10px; }
+.baseline-grid .table-wrap { max-width: 100%; }
+.baseline-grid .data-table td.name { font-weight: 550; }
+.baseline-grid .badge.maturity {
+  text-transform: none; letter-spacing: 0; font-weight: 600; font-size: 10.5px;
+}
